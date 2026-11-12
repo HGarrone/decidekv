@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.venv/
+
+# downloaded datasets, embedding caches and third-party binaries (re-created by the scripts)
+data/
+vendor/
+*.npz
+
+# working notes and superseded experiments (not part of the library)
+*.odt
+_archive/
