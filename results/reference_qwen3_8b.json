@@ -1,0 +1,95 @@
+{
+ "_about": "Reference numbers measured on 2026-11-11 with earlier scripts of this project (not part of the repository), same machine and same Qwen3-8B weights. CLM-8B: Qwen3-8B embeddings through llama.cpp plus the released CLM-v0.1-8B heads, as released and after fine-tuning the heads on the task's training split. OpenJev library: the openjev package as distributed, with its own prompt, through the Ollama server. benchmarks/baselines.py re-implements both under the shared prompt; CLM-8B as released on Banking77 was re-measured with it on 2026-11-12 (same accuracy, 35 ms).",
+ "clm8b/banking77": {
+  "acc": 0.043333333333333335,
+  "ms": 34.66889999981504
+ },
+ "clm8b-ft/banking77": {
+  "acc": 0.8433333333333334,
+  "ms": 20.703849964775145,
+  "train": {
+   "val_start": 0.032999999821186066,
+   "val_best": 0.8640000224113464,
+   "best_epoch": 28,
+   "train_s": 69.8338963999413,
+   "train_pairs": 9003,
+   "val_pairs": 1000
+  }
+ },
+ "clm8b/wordnet/200": {
+  "acc": 0.12666666666666668,
+  "ms": 20.667399978265166
+ },
+ "clm8b-ft/wordnet/200": {
+  "acc": 0.26,
+  "ms": 20.666750031523407
+ },
+ "clm8b/wordnet/1000": {
+  "acc": 0.04666666666666667,
+  "ms": 20.719199907034636
+ },
+ "clm8b-ft/wordnet/1000": {
+  "acc": 0.16666666666666666,
+  "ms": 20.72960021905601
+ },
+ "clm8b/wordnet/3000": {
+  "acc": 0.04,
+  "ms": 20.766949863173068
+ },
+ "clm8b-ft/wordnet/3000": {
+  "acc": 0.10666666666666667,
+  "ms": 20.75695025268942
+ },
+ "clm8b/wordnet/10000": {
+  "acc": 0.03333333333333333,
+  "ms": 20.828699809499085
+ },
+ "clm8b-ft/wordnet/10000": {
+  "acc": 0.08666666666666667,
+  "ms": 20.780100137926638
+ },
+ "clm8b-ft/wordnet/train": {
+  "val_start": 0.2064676582813263,
+  "val_best": 0.4046434462070465,
+  "best_epoch": 35,
+  "train_s": 235.87149829999544,
+  "train_pairs": 10794,
+  "val_pairs": 1206
+ },
+ "clm8b/typed": {
+  "acc": 0.368,
+  "ms": 78.98704996332526
+ },
+ "clm8b-ft/typed": {
+  "acc": 0.7105,
+  "ms": 78.98704996332526,
+  "train": {
+   "val_start": 0.3700000047683716,
+   "val_best": 0.7250000238418579,
+   "best_epoch": 24,
+   "train_s": 66.89818050013855,
+   "train_examples": 5400,
+   "val_examples": 600
+  }
+ },
+ "clm8b/aim": {
+  "acc": 0.15,
+  "ms": 124.43475006148219
+ },
+ "openjev-library/banking77": {
+  "acc": 0.44,
+  "ms": 117.15609999373555
+ },
+ "openjev-library/wordnet/200": {
+  "acc": 0.22666666666666666,
+  "ms": 164.45524990558624
+ },
+ "openjev-library/typed": {
+  "acc": 0.5815,
+  "ms": 62.47548998799175
+ },
+ "openjev-library/aim": {
+  "acc": 0.25,
+  "ms": 468.72080001048744
+ }
+}

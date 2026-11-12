@@ -1,0 +1,213 @@
+# kvindex: a tool for fast decisions over many options with a local LLM
+
+## Summary
+
+Many programs need the same small decision again and again: given a state, pick one option out of a list. A
+customer message goes to one of 77 intents; a definition names one of 30,000 words; an agent picks the next tool.
+`kvindex` is a Python library that makes this decision with a local LLM in 15 to about 100 milliseconds, for lists
+from two options to tens of thousands, without training the LLM.
+
+The library does not introduce a new mechanism. It assembles published techniques behind one call:
+
+- up to 3,000 options, the list is written once into the KV cache of the model and each decision computes only the
+  tokens of the new state;
+- above 3,000 options, an embedding catalogue selects the 50 closest options and the LLM chooses among them;
+- when examples of the task exist, the catalogue can be trained on them in about a minute, with numpy only.
+
+On one consumer GPU and one 8B model, the untrained tool is ahead of the OpenJev architecture on three tasks out of
+four, runs on lists where OpenJev does not, and is far ahead of CLM-8B as released. With the catalogue trained on
+Banking77 it reaches 93.0% in 15 ms per decision, above CLM-8B with heads fine-tuned on the same task (84.3%).
+
+## The decision
+
+A decision has three parts: a fixed list of options, a state that changes at every call, and a question. The
+answer must be one of the options. Three properties matter in practice: the accuracy of the choice, the time per
+decision, and how both change when the list grows.
+
+## What the tool does
+
+![The two regimes of kvindex](fig_mechanism.png)
+
+**Cached list.** The prompt starts with the instructions and the whole list of options, followed by the state and
+the question. In a causal LLM the keys and values of a token depend only on the tokens before it, so the cache of
+the list is computed once and reused exactly by every later call. A decision evaluates only the tokens of the state
+and of the question; these tokens attend to every token of every option. The answer is decoded through a trie of
+the option names, so it is always one of the options, and options already refuted can be excluded from the
+decoding.
+
+**Catalogue.** The cache of the list grows with the list: about 78 KB per token for Qwen3-8B with an 8-bit cache.
+Above a few thousand options the list stops fitting in the trained context of the model and then in memory. For
+these lists the tool keeps one embedding vector per option, finds the 50 options closest to the state, and writes
+only these in the prompt. This is the standard retrieve-then-rerank pipeline.
+
+**Trained catalogue.** With examples of the form (state, right option), a low-rank correction of the embedding
+space is learned for states and for options. It starts as the identity, so training starts from the untrained
+catalogue; the weights of the best validation epoch are kept and the validation accuracy before and after is
+reported. Only this projection is trained. With a trained catalogue the closest option is returned directly.
+
+`KV.index` chooses between the first two regimes from the size of the list; the threshold is a parameter.
+
+## Prior work
+
+Every mechanism above is published work.
+
+- Putting the candidates first and encoding them once thanks to prefix caching is Corpus-in-Context prompting
+  (LOFT, Lee et al., 2024).
+- Reusing a precomputed KV cache across queries is Cache-Augmented Generation (Chan et al., 2024); per-block
+  precomputed caches appear in TurboRAG, KVLink and CacheBlend.
+- Decoding constrained to candidate names with a token trie is GENRE (De Cao et al., 2021).
+- An embedding shortlist followed by an LLM choice is the standard retrieve-then-rerank pipeline.
+- Contrastive training of state and option projections follows InfoNCE (van den Oord et al., 2018) and CLIP
+  (Radford et al., 2021), and is the design of Contrastive Language Models (CLM-v0.1-8B).
+- The low-rank correction with an identity start has the form of LoRA (Hu et al., 2021).
+- The `Choice` / `Score` / `Noul` question types are those of OpenJev (MIT licence). The library contains no OpenJev
+  code.
+
+The contribution of the repository is the tool: one interface that selects the regime by size, the exclusion of
+refuted options, a catalogue training that needs only numpy, and measurements that report accuracy and time
+together.
+
+## Measurement protocol
+
+- **Machine and model.** One RTX 4070 SUPER (12 GB). Qwen3-8B through llama.cpp in the Python process, KV cache
+  `q8_0`. Embedding model of the catalogue: Qwen3-Embedding-4B.
+- **Equal conditions.** Every method measured by `benchmarks/baselines.py` uses the same model, engine, queries and
+  prompt blocks (instructions, option list, state, question); the methods differ only in the order of the blocks
+  and in how the answer is read.
+- **Tasks.** Banking77: 77 intents, 300 test messages. WordNet reverse dictionary: a definition must be matched to
+  its word among 200 to 30,000 candidate nouns. Typed Decisions: 2,000 typed questions about agent traces. Aim game:
+  a hidden cell on a 15×15 grid, a direction hint after every miss, at most 25 shots, 20 games.
+- **Numbers.** Accuracy and the median time of one decision, always together. With 600 queries one accuracy has a
+  standard error of about 2 points; with 150 queries, about 4. Times vary between sessions on the same machine: the
+  same configuration at 10,000 options measured between 84 and 99 ms on one day, with identical accuracy in every
+  repetition.
+- **Reference rows.** The OpenJev library (its own prompt, through the Ollama server) and CLM-8B (Qwen3-8B with the
+  released CLM-v0.1-8B heads, as released and with heads fine-tuned on the task) were measured earlier on the same
+  machine and weights with scripts that are not part of the repository; their numbers are in
+  `results/reference_qwen3_8b.json`. The row "OpenJev architecture" is a re-implementation of OpenJev's design on the
+  shared prompt and engine, not the OpenJev library.
+
+## Results
+
+### Comparison
+
+<!-- table:comparison -->
+| Method | Training | Banking77 (77 intents) | WordNet (200 words) | Typed Decisions | Aim game (games won, time per shot) |
+|---|---|---|---|---|---|
+| **kvindex** | none | 60.3% · 66 ms | 72.7% · 38 ms | 51.3% · 72 ms | 95.0% · 127 ms |
+| **kvindex, trained catalogue** | on the task | 93.0% · 15 ms | – | – | – |
+| OpenJev architecture, shared prompt | none | 39.7% · 90 ms | 63.3% · 132 ms | 59.3% · 67 ms | 25.0% · 423 ms |
+| OpenJev library, own prompt, Ollama | none | 44.0% · 117 ms | 22.7% · 164 ms | 58.1% · 62 ms | 25.0% · 469 ms |
+| CLM-8B as released | none | 4.3% · 35 ms | 12.7% · 21 ms | 36.8% · 79 ms | 15.0% · 124 ms |
+| CLM-8B, heads fine-tuned | on the task | 84.3% · 21 ms | 26.0% · 21 ms | 71.0% · 79 ms | – |
+| Embedding model alone | none | 65.7% · 16 ms | – | – | – |
+| Embedding top-50, then LLM | none | 56.3% · 127 ms | – | – | – |
+| State-first prompt, constrained decoding | none | 61.0% · 138 ms | – | – | – |
+| Cross-encoder, one LLM call per option (30 messages) | none | 70.0% · 1,589 ms | – | – | – |
+<!-- /table:comparison -->
+
+![Accuracy of every method on every task](fig_matrix.png)
+
+Without training, kvindex is ahead of the OpenJev architecture on Banking77, WordNet and the aim game, and behind
+it on Typed Decisions, where every case asks five different questions with few options each. CLM-8B as released is
+below both on the four tasks; with heads fine-tuned on the task it is ahead of untrained kvindex on Banking77 and
+Typed Decisions.
+
+### Growing lists
+
+<!-- table:scale -->
+| Options | Index chosen by `KV.index` | Accuracy | Time per decision | Index build | Right answer among the 50 candidates |
+|---|---|---|---|---|---|
+| 1,000 | Index | 66.7% | 43 ms | 1 s | – |
+| 3,000 | Index | 56.3% | 51 ms | 2 s | – |
+| 10,000 | TopKIndex | 54.0% | 96 ms | 13 s | 89.5% |
+| 30,000 | TopKIndex | 51.5% | 105 ms | 34 s | 86.5% |
+<!-- /table:scale -->
+
+The time per decision goes from about 40 ms at 1,000 options to about 100 ms at 30,000. Building the index takes
+seconds: one pass over the list, or one embedding per option. Accuracy falls as the candidates multiply.
+
+<!-- table:scale150 -->
+| Options | kvindex | OpenJev architecture | CLM-8B as released | CLM-8B, heads fine-tuned |
+|---|---|---|---|---|
+| 200 | 72.7% · 40 ms | 63.3% · 132 ms | 12.7% · 21 ms | 26.0% · 21 ms |
+| 1,000 | 62.7% · 42 ms | not supported (max 255) | 4.7% · 21 ms | 16.7% · 21 ms |
+| 3,000 | 57.3% · 50 ms | not supported (max 255) | 4.0% · 21 ms | 10.7% · 21 ms |
+| 10,000 | 50.7% · 94 ms | not supported (max 255) | 3.3% · 21 ms | 8.7% · 21 ms |
+| 30,000 | 46.0% · 103 ms | not supported (max 255) | not measured | not measured |
+<!-- /table:scale150 -->
+
+![Accuracy and time against the number of options](fig_scaling.png)
+
+In the right panel the two CLM-8B lines coincide: the fine-tuned heads cost the same forward pass.
+
+### Training the catalogue
+
+<!-- table:training -->
+| Banking77, 300 test messages | Untrained catalogue | Trained catalogue |
+|---|---|---|
+| Catalogue alone (no LLM call) | 65.7% · 15 ms | 93.0% · 15 ms |
+| Catalogue top-5, then LLM | 62.3% · 84 ms | 60.7% · 84 ms |
+| Catalogue top-50, then LLM | 55.3% · 126 ms | 52.7% · 126 ms |
+| Validation accuracy during training | 71.2% | 92.4% |
+| Cost of training | – | 10,003 examples, 97 s in total (20 s of training, the rest is embedding the examples) |
+<!-- /table:training -->
+
+Three facts follow from the table.
+
+1. Training raises the accuracy of the catalogue from 65.7% to 93.0% on the test messages.
+2. It does not change the time per decision: 15 ms, the cost of one embedding.
+3. After training, the catalogue alone is more accurate than the catalogue followed by the LLM. The LLM, which is
+   not trained on the task, lowers the result when it re-chooses among good candidates.
+
+For this reason an index built with a trained catalogue answers without calling the LLM unless asked otherwise.
+
+A catalogue trained with the examples of half of the intents only:
+
+<!-- table:heldout -->
+| Intent of the test message | Untrained catalogue | Catalogue trained on half of the intents |
+|---|---|---|
+| Had training examples (39 intents) | 66.0% | 95.4% |
+| Had no training example (38 intents) | 65.3% | 21.1% |
+<!-- /table:heldout -->
+
+The training helps the options it has seen and harms the others. A trained catalogue should be used when the
+examples cover the options.
+
+## Limits
+
+- Pure-attention models only: models with recurrent layers cannot reuse a cached prefix.
+- The cached list must fit in the context and in GPU memory.
+- One list is cached at a time; alternating between lists recomputes the list that comes back.
+- The trained catalogue was measured on one dataset.
+- The reference rows were not re-measured under the shared prompt, except CLM-8B as released on Banking77 (same
+  accuracy).
+
+## Reproducing
+
+```bash
+python benchmarks/checks.py --baselines        # correctness checks, to run first
+python benchmarks/baselines.py --task banking77
+python benchmarks/baselines.py --task wordnet --sizes 200 --methods kvindex,openjev
+python benchmarks/baselines.py --task typed --methods kvindex,openjev
+python benchmarks/baselines.py --task aim --methods kvindex,openjev
+python benchmarks/scale.py --sizes 1000,3000,10000,30000
+python benchmarks/scale.py --sizes 200,1000,3000,10000,30000 --queries 150 --core 200
+python benchmarks/train_bench.py
+python benchmarks/report.py                    # tables of this article and of the README
+python paper/figures.py                        # figures
+```
+
+## References
+
+- N. De Cao, G. Izacard, S. Riedel, F. Petroni. *Autoregressive Entity Retrieval* (GENRE). ICLR 2021.
+- B. J. Chan, C.-T. Chen, J.-H. Cheng, H.-H. Huang. *Don't Do RAG: When Cache-Augmented Generation is All You Need
+  for Knowledge Tasks*. 2024.
+- E. J. Hu et al. *LoRA: Low-Rank Adaptation of Large Language Models*. 2021.
+- J. Lee et al. *Can Long-Context Language Models Subsume Retrieval, RAG, SQL, and More?* (LOFT). 2024.
+- A. van den Oord, Y. Li, O. Vinyals. *Representation Learning with Contrastive Predictive Coding* (InfoNCE). 2018.
+- A. Radford et al. *Learning Transferable Visual Models From Natural Language Supervision* (CLIP). 2021.
+- I. Casanueva et al. *Efficient Intent Detection with Dual Sentence Encoders* (Banking77). 2020.
+- G. A. Miller. *WordNet: A Lexical Database for English*. Communications of the ACM, 1995.
+- OpenJev: https://github.com/GPT-AGI/OpenJev. CLM-v0.1-8B: https://huggingface.co/Contrastive-LM/CLM-v0.1-8B.
+  llama.cpp: https://github.com/ggml-org/llama.cpp.

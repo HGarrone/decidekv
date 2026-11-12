@@ -1,0 +1,449 @@
+"""
+kvindex core: options-first prompts whose KV cache acts as a reusable index.
+
+Layout of every prompt:   [header + options]  [state]  [question]  -> answer
+The options block is byte-identical across calls, so the inference server keeps its KV cache and only
+the state/question tokens are computed. Questions on the same state also share [options][state].
+"""
+from __future__ import annotations
+
+import difflib
+import json
+import math
+import time
+import warnings
+from typing import Any, Iterable
+
+from .ollama import HYBRID_ARCHS, Ollama
+from .primitives import (Choice, ChoiceAnswer, Noul, NoulAnswer, Response, Score, ScoreAnswer, Usage,
+                         confidence, softmax)
+
+LETTERS = [chr(c) for c in range(65, 91)] + [chr(c) for c in range(97, 123)]   # 52 single-token labels
+MAX_LABELS = len(LETTERS)
+CHARS_PER_TOKEN = 3.0          # conservative estimate used to size num_ctx before the first call
+
+
+def render_state(state: Any) -> str:
+    """Strings pass through; dicts become `key: value` lines; lists become `- item` lines."""
+    if isinstance(state, str):
+        return state.strip()
+    if isinstance(state, dict):
+        return "\n".join(f"{k}: {render_state(v) if isinstance(v, (dict, list)) else v}" for k, v in state.items())
+    if isinstance(state, (list, tuple)):
+        return "\n".join(f"- {render_state(x)}" for x in state)
+    return json.dumps(state, ensure_ascii=False)
+
+
+def _ctx_for(chars: int) -> int:
+    need = int(chars / CHARS_PER_TOKEN) + 512
+    return max(2048, 1 << math.ceil(math.log2(need)))
+
+
+def parse_options(options: Any) -> tuple[list[str], list[str], list[str]]:
+    """Names, descriptions and prompt texts of a list of names or a {name: description}
+    mapping. Names must be unique and at least two."""
+    if isinstance(options, dict):
+        keys = [str(k_) for k_ in options]
+        descs = [str(d) if d not in (None, "") else "" for d in options.values()]
+    else:
+        keys = [str(o) for o in options]
+        descs = [""] * len(keys)
+    texts = [f"{k_}: {d}" if d else k_ for k_, d in zip(keys, descs)]
+    if len(keys) < 2:
+        raise ValueError("an Index needs at least 2 options")
+    if len(set(keys)) != len(keys):
+        raise ValueError("options must be unique")
+    return keys, descs, texts
+
+
+class Index:
+    """A fixed set of options, pre-filled into the model's KV cache. Create it with `KV.index(...)`.
+
+    The answer is the option itself, decoded under a constraint that only allows options of the list
+    (grammar-constrained up to `enum_max` options on Ollama, a token trie with the llama.cpp backend).
+    `labels=True` answers with single-token labels A-Z/a-z instead (one forward pass, a probability for
+    every option, at most 52 options); it is less accurate when options are words, because the first
+    letter of the intended word gets read as a label.
+
+    Name things for the model: `noun` ("intent", "word", "tool"…), `state_label` ("Customer message",
+    "Definition"…) and `question` become part of the cached prompt. A domain-specific prompt measured up
+    to +16 points over a generic one.
+    """
+
+    def __init__(self, kv: "KV", options: Any, labels: Any = False, task: str | None = None,
+                 question: str | None = None, noun: str = "option", state_label: str = "State",
+                 enum_max: int = 500, warm: bool = True):
+        self.kv = kv
+        self.keys, self.descs, self.texts = parse_options(options)
+        self.n = len(self.keys)
+        self.task, self.question, self.noun, self.state_label = task, question, noun, state_label
+        if isinstance(labels, (list, tuple)):
+            self.labels = list(labels)
+        elif labels:
+            if self.n > MAX_LABELS:
+                raise ValueError(f"labels=True supports at most {MAX_LABELS} options")
+            self.labels = LETTERS[:self.n]
+        else:
+            self.labels = None
+        self.enum_max = enum_max
+        self._intro, self._options = self.intro(), self.options_block()
+        kv.require_ctx(_ctx_for(len(self.prefix) + 2000))
+        self.prompt_tokens = None
+        if warm:
+            self.warm()
+
+    # ------------------------------------------------------------ prompt blocks
+    # The same five blocks, with the same words, are used by every architecture; only their order and the way
+    # the answer is read change. kvindex uses: [intro + options] (cached) | [state] | [question + answer head].
+    def intro(self) -> str:
+        noun, plural = self.noun, self.noun + "s"
+        task = f" {self.task.strip()}" if self.task else ""
+        if self.labels:
+            reply = f"Reply with the label of the {noun} (the text before the colon), and nothing else."
+        else:
+            part = " (only the part before the colon)" if self.texts != self.keys else ""
+            reply = f"Reply with the {noun} exactly as written in the list{part}, and nothing else."
+        return (f"You are a decision engine.{task} Answer the question about the {self.state_label.lower()} "
+                f"by choosing one {noun} from the list of {plural}. {reply}\n\n")
+
+    def options_block(self) -> str:
+        if self.labels:
+            own = self.labels == self.keys          # e.g. Score levels "0".."n" or Noul "Yes"/"No"
+            body = "\n".join(f"{lab}: {(d or k_) if own else t}"
+                             for lab, k_, d, t in zip(self.labels, self.keys, self.descs, self.texts))
+        else:
+            body = "\n".join(f"- {t}" for t in self.texts)
+        return f"### {(self.noun + 's').capitalize()}\n{body}\n\n"
+
+    def state_block(self, state: Any) -> str:
+        return f"### {self.state_label}\n{render_state(state)}\n\n"
+
+    def question_block(self, instructions: str | None) -> str:
+        q = instructions or self.question or f"Which {self.noun} best matches the {self.state_label.lower()}?"
+        return f"### Question\n{q}\n\n"
+
+    def answer_head(self) -> str:
+        return f"### {self.noun.capitalize()}\n"
+
+    @property
+    def prefix(self) -> str:
+        return self._intro + self._options
+
+    def segments(self, state: Any, instructions: str | None, order: str = "options-first") -> tuple[str, str, str]:
+        """options-first: [intro + options] [state] [question + head]; the first segment is shared by every
+        call, so the backend keeps it in the KV cache. state-first: [intro + state] [question] [options + head]."""
+        if order == "options-first":
+            return (self.prefix, self.state_block(state), self.question_block(instructions) + self.answer_head())
+        return (self._intro + self.state_block(state), self.question_block(instructions),
+                self._options + self.answer_head())
+
+    def prompt(self, state: Any, instructions: str | None) -> str:
+        return "".join(self.segments(state, instructions))
+
+    def warm(self) -> "Index":
+        """Fill the KV cache with the options block (the offline 'indexing' step)."""
+        self.kv._check_arch()
+        st = self.kv.client.prefill(self.segments("(empty)", None), self.num_ctx)
+        self.prompt_tokens = st["input_tokens"] + st["cached_tokens"]
+        if self.prompt_tokens + 256 > self.num_ctx:
+            self.kv.require_ctx(1 << math.ceil(math.log2(self.prompt_tokens + 1024)))
+            self.warm()
+        return self
+
+    @property
+    def num_ctx(self) -> int:
+        return self.kv.num_ctx
+
+    # ------------------------------------------------------------ answering
+    def choose(self, state: Any, instructions: str | None = None, usage: Usage | None = None,
+               exclude: Iterable[str] = ()) -> ChoiceAnswer:
+        """Pick the best option for `state` (one call to the LLM).
+
+        `exclude` removes options from the choice (e.g. attempts already refuted by the environment in a
+        trial-and-error loop): the decoding constraint makes them impossible to pick, not just discouraged."""
+        excluded = set(exclude)
+        allowed = [k_ for k_ in self.keys if k_ not in excluded] if excluded else self.keys
+        if not allowed:
+            raise ValueError("every option is excluded")
+        usage = usage if usage is not None else Usage()
+        if self.labels:
+            return self._choose_labels(state, instructions, usage, allowed)
+        return self._choose_name(state, instructions, usage, allowed)
+
+    @staticmethod
+    def _account(st: dict, usage: Usage):
+        usage.input_tokens += st.get("input_tokens", 0)
+        usage.cached_tokens += st.get("cached_tokens", 0)
+        usage.output_tokens += st.get("output_tokens", 0)
+
+    def _choose_labels(self, state, instructions, usage, allowed) -> ChoiceAnswer:
+        by_key = dict(zip(self.keys, self.labels))
+        labels = [by_key[k_] for k_ in allowed]
+        lps, st = self.kv.client.label_logprobs(self.segments(state, instructions), labels, self.num_ctx)
+        self._account(st, usage)
+        lp = {self.keys[self.labels.index(lab)]: v for lab, v in lps.items() if lab in labels}
+        probs = softmax(lp)
+        full = {k_: round(probs.get(k_, 0.0), 6) for k_ in self.keys}
+        best = max(probs, key=probs.get)
+        return ChoiceAnswer(choice=best, probabilities=full, confidence=round(confidence(list(full.values())), 4))
+
+    def _choose_name(self, state, instructions, usage, allowed) -> ChoiceAnswer:
+        text, lp, st = self.kv.client.pick_option(self.segments(state, instructions), self.keys, self.num_ctx,
+                                                  self.enum_max, allowed=None if allowed is self.keys else allowed)
+        self._account(st, usage)
+        best = self._match(text or "", allowed)
+        p = round(math.exp(lp), 6) if lp is not None else None
+        probs = {best: p} if p is not None else {}
+        return ChoiceAnswer(choice=best, probabilities=probs, confidence=p if p is not None else 0.0)
+
+    def _match(self, text: str, allowed: list[str] | None = None) -> str:
+        """Map decoded text to an option (always one of `allowed`)."""
+        pool = allowed if allowed is not None else self.keys
+        t = text.strip().strip('"').strip()
+        low = {k_.lower(): k_ for k_ in pool}
+        if t.lower() in low:
+            return low[t.lower()]
+        head = t.split(":")[0].strip().lower()
+        if head in low:
+            return low[head]
+        close = difflib.get_close_matches(t.lower(), list(low), n=1, cutoff=0.0)
+        return low[close[0]] if close else pool[0]
+
+    def __len__(self):
+        return self.n
+
+    def __repr__(self):
+        mode = "labels+logprobs" if self.labels else ("enum" if self.n <= self.enum_max else "free+match")
+        return f"Index(n={self.n}, mode={mode}, prompt_tokens={self.prompt_tokens})"
+
+
+class KV:
+    """Entry point. `KV("qwen3:8b")` loads any pure-attention GGUF model that Ollama has downloaded.
+
+    >>> kv = KV("qwen3:8b")
+    >>> intents = kv.index(["card arrival", "lost or stolen card", "refund not showing up"])
+    >>> intents.choose("I still haven't received my new card").choice
+    'card arrival'
+    """
+
+    def __init__(self, model: str, backend: str = "llamacpp", host: str | None = None, keep_alive: str = "30m",
+                 embed: Any = None, flat_max: int = 3000, query_template: str | None = None, **backend_kw):
+        """backend="llamacpp" (default: in-process llama.cpp; loads the GGUF that Ollama already downloaded, or a
+        .gguf path; extra keyword arguments such as n_ctx and kv_type go to the backend) or "ollama" (talks to the
+        Ollama server).
+
+        `embed` is the embedding model of the catalogue used for option sets larger than `flat_max` (a model name
+        such as "qwen3-embedding:4b", or any callable that maps a list of texts to L2-normalised vectors).
+        `query_template` is the text sent to the embedding model for a state (placeholders {state} and {question});
+        the default suits instruction-tuned embedding models such as Qwen3-Embedding."""
+        if backend == "ollama":
+            self.client = Ollama(model, host, keep_alive)
+        elif backend == "llamacpp":
+            from .llamacpp import LlamaCpp
+            self.client = LlamaCpp(model, **backend_kw)
+        else:
+            raise ValueError(f"unknown backend {backend!r} (use 'ollama' or 'llamacpp')")
+        self.model = model
+        self.backend = backend
+        self.embed = embed
+        self.flat_max = flat_max
+        self.query_template = query_template
+        # one context size for the whole session: Ollama reloads the model whenever num_ctx changes
+        self.num_ctx = 4096
+        self._indexes: dict[tuple, Any] = {}
+        self._arch_checked = False
+        self._encoder = None
+
+    def require_ctx(self, n: int):
+        """Grow (never shrink) the shared context size."""
+        self.num_ctx = max(self.num_ctx, n)
+
+    def close(self):
+        """Free the models (the llama.cpp backend keeps GPU memory until it is closed)."""
+        for obj in [self._encoder, self.client]:
+            if obj is not None and hasattr(obj, "close"):
+                obj.close()
+        self._encoder = None
+        self._indexes.clear()
+
+    def _check_arch(self):
+        if self._arch_checked:
+            return
+        self._arch_checked = True
+        arch = self.client.architecture()
+        if arch in HYBRID_ARCHS:
+            warnings.warn(f"{self.model} uses a hybrid recurrent architecture ({arch}): Ollama cannot reuse a "
+                          "partial prefix, so answers stay correct but each call recomputes the options. "
+                          "Use a pure-attention model for the speed-up.", stacklevel=3)
+
+    @property
+    def encoder(self):
+        """The embedding model of the catalogue, loaded on first use."""
+        if self._encoder is None:
+            if self.embed is None:
+                raise ValueError(f"more than {self.flat_max} options need an embedding model: "
+                                 'KV(model, embed="qwen3-embedding:4b")')
+            if callable(self.embed):
+                self._encoder = self.embed
+            elif self.backend == "llamacpp":
+                from .llamacpp import LlamaCppEncoder
+                self._encoder = LlamaCppEncoder(self.embed)
+            else:
+                from .catalog import OllamaEncoder
+                self._encoder = OllamaEncoder(self.embed, self.client.host)
+        return self._encoder
+
+    def train(self, options: Any, examples: Any, question: str | None = None, out: str | None = None,
+              **fit_kw) -> Any:
+        """Train the embedding catalogue of `options` on `examples`, a list of (state, name of the right option).
+
+        Only the catalogue is trained (a small projection of the embedding vectors, see `kvindex.train`); the LLM is
+        not. Use the same `question` as in `KV.index`. The returned head goes to `KV.index(options, head=head)`;
+        `head.report` holds the validation accuracy before and after training. `out` saves it to a .npz file."""
+        from .catalog import QUERY_TEMPLATE
+        from .train import fit_head
+        keys, _, texts = parse_options(options)
+        pos = {name: i for i, name in enumerate(keys)}
+        examples = list(examples)
+        for state, option in examples:
+            if str(option) not in pos:
+                raise ValueError(f"example option not in the option list: {option!r}")
+        encoder = self.encoder
+        option_vectors = encoder(texts)
+        template = self.query_template or QUERY_TEMPLATE
+        state_vectors = encoder([template.format(question=question or "", state=render_state(state))
+                                 for state, _ in examples])
+        head = fit_head(state_vectors, option_vectors, [pos[str(option)] for _, option in examples], **fit_kw)
+        if out:
+            head.save(out)
+        return head
+
+    def index(self, options: Any, task: str | None = None, question: str | None = None, noun: str = "option",
+              state_label: str = "State", labels: Any = False, k: int | None = None, head: Any = None, **kw) -> Any:
+        """Build an index over `options` (list of names or {name: description}).
+
+        Up to `flat_max` options the whole list is written once in the KV cache and every decision computes only
+        the state (`Index`). Above it the embedding catalogue selects the `k` closest options for each decision and
+        the LLM chooses among them (`TopKIndex`).
+
+        `head` is a trained catalogue (the object returned by `KV.train`, or the path of its .npz file). With a head
+        the catalogue is used at every size and, unless `k` is given, it decides alone (k=1, no LLM call).
+
+        >>> kv.index(intents, noun="intent", state_label="Customer message",
+        ...          question="Which intent does this customer message express?")
+        """
+        if k is None:
+            k = 1 if head is not None else 50
+        key = (tuple(options.items()) if isinstance(options, dict) else tuple(options), task, question, noun,
+               state_label, tuple(labels) if isinstance(labels, (list, tuple)) else bool(labels), k,
+               head if isinstance(head, str) else id(head) if head is not None else None,
+               tuple(sorted(kw.items())))
+        if key not in self._indexes:
+            if head is not None or len(options) > self.flat_max:
+                if labels:
+                    raise ValueError("labels are not available with the embedding catalogue")
+                from .catalog import TopKIndex
+                if isinstance(head, str):
+                    from .train import Head
+                    head = Head.load(head)
+                self._indexes[key] = TopKIndex(self, options, self.encoder, k=k, head=head,
+                                               query_template=self.query_template, task=task,
+                                               question=question, noun=noun, state_label=state_label, **kw)
+            else:
+                self._indexes[key] = Index(self, options, labels=labels, task=task, question=question, noun=noun,
+                                           state_label=state_label, **kw)
+        return self._indexes[key]
+
+    def choose(self, state: Any, options: Any, instructions: str | None = None) -> ChoiceAnswer:
+        """One-shot convenience: the index for `options` is built on first use and reused afterwards."""
+        if hasattr(options, "choose"):
+            idx = options
+        else:
+            idx = self.index(options)
+        return idx.choose(state, instructions)
+
+    def decide(self, state: Any, questions: dict[str, Any] | Any = None, temperature: float = 1.0,
+               labels: bool = False) -> Response:
+        """OpenJev / Jev-style: several typed questions about one state.
+
+        `questions` maps ids to `Choice`, `Score` or `Noul` (these classes, OpenJev's, or plain dicts with a
+        "type" field). An OpenJev `SystemOneRequest` can be passed as the only argument.
+        """
+        if questions is None and hasattr(state, "questions"):
+            state, questions = state.state, state.questions
+        t0 = time.perf_counter()
+        usage, answers = Usage(), {}
+        for qid, q in questions.items():
+            q, idx, instructions = self.question_index(q, labels=labels)
+            a = idx.choose(state, instructions, usage)
+            if q.type == "choice":
+                if temperature != 1.0 and a.probabilities:
+                    a = _retemper(a, temperature)
+                answers[qid] = a
+            elif q.type == "score":
+                levels = idx.keys
+                probs = {lv: a.probabilities.get(lv, 0.0) for lv in levels}
+                answers[qid] = ScoreAnswer(score=round(sum(int(k_) * p for k_, p in probs.items()), 4),
+                                           probabilities=probs, confidence=a.confidence,
+                                           legend=dict(zip(levels, q.criteria)))
+            else:
+                answers[qid] = NoulAnswer(noul=round(a.probabilities.get("Yes", 0.0), 6))
+        return Response(model=f"kvindex/{self.model}", answers=answers, usage=usage,
+                        latency_ms=round((time.perf_counter() - t0) * 1000, 2))
+
+    def question_index(self, q: Any, labels: bool = False, warm: bool = True) -> tuple[Any, Index, str]:
+        """(question, index, instructions) used by `decide` for one typed question.
+
+        Choice: the options (answer by name; labels=True: one-token labels, a probability for every option).
+        Score: levels "0".."n" described by the criteria. Noul: "Yes"/"No" described by the criteria."""
+        q = _coerce(q)
+        if q.type == "choice":
+            opts = q.options if q.options is not None else q.criteria
+            idx = opts if isinstance(opts, Index) else self.index(opts, labels=labels, warm=warm)
+            return q, idx, q.instructions
+        if q.type == "score":
+            levels = [str(i) for i in range(len(q.criteria))]
+            idx = self.index({lv: c for lv, c in zip(levels, q.criteria)}, labels=levels, noun="level", warm=warm)
+            return q, idx, q.instructions + " Answer with the level number."
+        if q.type == "noul":
+            crit = q.criteria or {}
+            idx = self.index({"Yes": crit.get("true") or "the answer to the question is yes / true",
+                              "No": crit.get("false") or "the answer to the question is no / false"},
+                             labels=["Yes", "No"], noun="answer", warm=warm)
+            return q, idx, q.instructions
+        raise ValueError(f"unknown question type {q.type!r}")
+
+
+def _coerce(q: Any):
+    """Accept kvindex dataclasses, OpenJev pydantic models or plain dicts."""
+    if isinstance(q, (Choice, Score, Noul)):
+        return q
+    d = q if isinstance(q, dict) else (q.model_dump() if hasattr(q, "model_dump") else vars(q))
+    t = d.get("type")
+    if t == "choice":
+        opts = d.get("options")
+        if opts is None:
+            opts = d.get("criteria")
+        return Choice(instructions=d.get("instructions", ""), options=opts)
+    if t == "score":
+        crit = d.get("criteria")
+        if crit is None and d.get("legend"):
+            crit = [d["legend"][k] for k in sorted(d["legend"], key=int)]
+        return Score(instructions=d.get("instructions", ""), criteria=list(crit))
+    if t == "noul":
+        crit = d.get("criteria")
+        return Noul(instructions=d.get("instructions", ""), criteria=crit if isinstance(crit, dict) else None)
+    raise ValueError(f"unknown question {q!r}")
+
+
+def _retemper(a: ChoiceAnswer, temperature: float) -> ChoiceAnswer:
+    lp = {k: math.log(p) / temperature for k, p in a.probabilities.items() if p > 0}
+    probs = softmax(lp)
+    full = {k: round(probs.get(k, 0.0), 6) for k in a.probabilities}
+    return ChoiceAnswer(choice=a.choice, probabilities=full, confidence=round(confidence(list(full.values())), 4))
+
+
+def iter_answers(index: Index, states: Iterable[Any], instructions: str | None = None):
+    """Answer many states against one index (consecutive calls keep the options cached)."""
+    for s in states:
+        yield index.choose(s, instructions)

@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kvindex"
+version = "0.1.0"
+description = "Fast decisions over many options with a local LLM: the option list lives in the KV cache, an embedding catalogue takes over for large lists, and the catalogue can be trained on your own examples."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+authors = [{ name = "Hobey Garrone" }]
+keywords = ["llm", "local-llm", "llama-cpp", "ollama", "kv-cache", "classification", "routing", "openjev", "reranking"]
+dependencies = []
+
+[project.optional-dependencies]
+llamacpp = ["llama-cpp-python>=0.3.36", "numpy>=1.24", "jinja2>=3.0"]
+catalog = ["numpy>=1.24"]
+bench = ["numpy>=1.24", "nltk>=3.8", "pandas>=2.0", "pyarrow>=14", "torch>=2.1", "matplotlib>=3.8"]
+dev = ["pytest", "numpy>=1.24"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["kvindex"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

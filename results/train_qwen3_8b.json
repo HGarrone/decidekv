@@ -1,0 +1,77 @@
+{
+  "banking77/flat": {
+    "acc": 0.6033333333333334,
+    "ms": 67.42130000202451,
+    "queries": 300
+  },
+  "banking77/training": {
+    "examples": 10003,
+    "total_s": 97.01409920000151,
+    "val_start": 0.712,
+    "val_best": 0.924,
+    "best_epoch": 19,
+    "train_s": 19.688464500002738,
+    "train_examples": 9003,
+    "val_examples": 1000
+  },
+  "banking77/catalogue-k1": {
+    "acc": 0.6566666666666666,
+    "ms": 15.49910000176169,
+    "queries": 300
+  },
+  "banking77/catalogue-k1-trained": {
+    "acc": 0.93,
+    "ms": 15.465349999431055,
+    "queries": 300
+  },
+  "banking77/catalogue-k5": {
+    "acc": 0.6233333333333333,
+    "ms": 83.50239999890618,
+    "queries": 300
+  },
+  "banking77/catalogue-k5-trained": {
+    "acc": 0.6066666666666667,
+    "ms": 83.70825000019977,
+    "queries": 300
+  },
+  "banking77/catalogue-k50": {
+    "acc": 0.5533333333333333,
+    "ms": 125.54220000129135,
+    "queries": 300
+  },
+  "banking77/catalogue-k50-trained": {
+    "acc": 0.5266666666666666,
+    "ms": 125.74719999975059,
+    "queries": 300
+  },
+  "banking77/half-training": {
+    "examples": 5020,
+    "total_s": 45.92529250000007,
+    "val_start": 0.7151394422310757,
+    "val_best": 0.9701195219123506,
+    "best_epoch": 15,
+    "train_s": 10.717033299999457,
+    "train_examples": 4518,
+    "val_examples": 502
+  },
+  "banking77/half-seen": {
+    "acc": 0.6601307189542484,
+    "ms": 15.571300002193311,
+    "queries": 153
+  },
+  "banking77/half-seen-trained": {
+    "acc": 0.954248366013072,
+    "ms": 15.595000000757864,
+    "queries": 153
+  },
+  "banking77/half-unseen": {
+    "acc": 0.6530612244897959,
+    "ms": 15.368700001999969,
+    "queries": 147
+  },
+  "banking77/half-unseen-trained": {
+    "acc": 0.2108843537414966,
+    "ms": 15.500500001508044,
+    "queries": 147
+  }
+}
