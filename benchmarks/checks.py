@@ -5,6 +5,9 @@ Correctness checks that must pass before any benchmark is run.
 
 1. chat template: thinking disabled (Qwen3-style templates)
 2. prefix reuse: logits after reusing the cached prefix == logits after a full recomputation
+3. resident prefix (forked into the working sequence) == decoding without cache
+4. resident prefixes do not leak into each other
+5. eviction and re-creation of resident prefixes
 
 With --baselines, the reference methods of benchmarks/baselines.py are also run on three trivial cases.
 """
@@ -21,6 +24,10 @@ INTRO = ("You are a decision engine. Answer the question about the definition by
          "list of words. Reply with the word exactly as written in the list, and nothing else.\n\n### Words\n")
 OPTIONS = ["- river\n", "- mountain\n", "- question\n", "- attention\n"]
 TAIL = "\n### Definition\na natural stream of water flowing to the sea\n\n### Question\nWhich word does this definition define?\n\n### Word\n"
+
+TAIL2 = TAIL.replace("a natural stream of water flowing to the sea", "the act of asking for information")
+LIST_B = ["- doctor\n", "- pilot\n", "- farmer\n", "- singer\n", "- lawyer\n"]
+LIST_C = ["- red\n", "- green\n", "- blue\n", "- yellow\n", "- purple\n", "- orange\n"]
 
 
 def report(name, ok, detail=""):
@@ -47,7 +54,7 @@ def main():
     ap.add_argument("--kv-type", default="f16")
     ap.add_argument("--baselines", action="store_true", help="also check the reference methods on trivial cases")
     a = ap.parse_args()
-    be = LlamaCpp(a.llm, n_ctx=4096, kv_type=a.kv_type)
+    be = LlamaCpp(a.llm, n_ctx=4096, kv_type=a.kv_type, resident=2)
     ok = True
 
     # 1. template
@@ -69,6 +76,57 @@ def main():
     be.eval_tokens(full)
     fresh = logits(be)
     ok &= report("prefix reuse == full recomputation", *close(cached, fresh, 1e-3))
+
+    # 3-5. resident prefixes (every architecture): exact, isolated, evicted and re-created
+    seg_a = (INTRO + "".join(OPTIONS), TAIL)
+    seg_a2 = (INTRO + "".join(OPTIONS), TAIL2)
+    seg_b = (INTRO + "".join(LIST_B), TAIL)
+    seg_c = (INTRO + "".join(LIST_C), TAIL)
+
+    toks, n = be._split(seg_a2)
+    be.clear()
+    be._decode(toks[:n], 0, 0)
+    be._decode(toks[n:], n, 0)
+    ref = logits(be)
+    be.clear()
+    be._registered.clear()
+    be.prefill(seg_a)
+    stats = be._eval(seg_a2)
+    got = logits(be)
+    same, detail = close(got, ref, 1e-6)
+    ok &= report("resident prefix == decoding without cache", same and stats["cached_tokens"] == n,
+                 f"{detail} reused {stats['cached_tokens']} of {n} prefix tokens")
+
+    other = be.tokenize("".join(LIST_B) * 3)
+    other2 = be.tokenize("".join(LIST_C) * 3)[:len(other)]
+    runs = []
+    for junk in (other, other2):
+        be.clear()
+        be._registered.clear()
+        be._base(be.bos() + junk)
+        be.prefill(seg_a)
+        be._eval(seg_a2)
+        runs.append(logits(be))
+    leak = float(np.max(np.abs(np.exp(runs[0]) - np.exp(runs[1]))))
+    drift = float(np.max(np.abs(np.exp(runs[0]) - np.exp(ref))))
+    ok &= report("resident prefixes do not leak into each other", len(other2) == len(other) and leak == 0.0,
+                 f"(max |dp| between two different neighbours = {leak:.2e}; numerical drift against the prefix alone "
+                 f"in the cache = {drift:.2e}, information)")
+
+    be.clear()
+    be._registered.clear()
+    be.prefill(seg_a)
+    be.prefill(seg_b)
+    be.prefill(seg_c)
+    kept = len(be.bases)
+    first = be._eval(seg_a2)
+    top1 = int(np.argmax(logits(be)))
+    second = be._eval(seg_a2)
+    top2 = int(np.argmax(logits(be)))
+    good = (kept == 2 and first["cached_tokens"] == 0 and second["cached_tokens"] == n
+            and top1 == int(np.argmax(ref)) and top2 == top1)
+    ok &= report("eviction and re-creation of resident prefixes", good,
+                 f"(resident {kept}, reused tokens after eviction {first['cached_tokens']}, then {second['cached_tokens']})")
 
     be.close()
     if a.baselines:

@@ -6,6 +6,9 @@ and lets the LLM choose among them. This is the standard retrieve-then-rerank pi
 """
 from __future__ import annotations
 
+import hashlib
+import os
+
 import numpy as np
 
 from .core import Index, parse_options, render_state
@@ -39,6 +42,19 @@ class Catalog:
         self.vec = np.asarray(vectors if vectors is not None else encoder(list(texts)), dtype=np.float32)
         if self.head is not None:
             self.vec = self.head.options(self.vec)
+
+    @staticmethod
+    def cached(texts, encoder, folder: str):
+        """Vectors of `texts`, computed by `encoder` once and saved in `folder` (keyed by the content of the texts
+        and by the class name of the encoder); later calls read them from disk."""
+        key = hashlib.sha256("\x00".join(texts).encode()).hexdigest()[:16]
+        path = os.path.join(folder, f"catalog_{type(encoder).__name__}_{key}.npy")
+        if os.path.exists(path):
+            return np.load(path)
+        vec = np.asarray(encoder(list(texts)), dtype=np.float32)
+        os.makedirs(folder, exist_ok=True)
+        np.save(path, vec)
+        return vec
 
     def query(self, state, question: str) -> np.ndarray:
         v = self.encoder([self.query_template.format(question=question, state=render_state(state))])[0]

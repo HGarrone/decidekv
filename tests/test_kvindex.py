@@ -272,3 +272,16 @@ def test_query_template_is_configurable():
     kv = make_kv(embed=enc, flat_max=3)
     kv.index(WORDS, k=3, question="Q?").choose("zebra")
     assert enc.seen[-1] == "Instruct: Q?\nQuery:zebra"
+
+
+def test_catalog_vectors_are_cached_on_disk(tmp_path):
+    enc = FakeEncoder()
+    texts = ["apple", "banana", "cherry"]
+    v1 = Catalog.cached(texts, enc, str(tmp_path))
+    assert len(list(tmp_path.glob("*.npy"))) == 1
+    v2 = Catalog.cached(texts, enc, str(tmp_path))
+    assert np.array_equal(v1, v2)
+    assert len(list(tmp_path.glob("*.npy"))) == 1
+    v3 = Catalog.cached(texts + ["date"], enc, str(tmp_path))
+    assert v3.shape[0] == 4
+    assert len(list(tmp_path.glob("*.npy"))) == 2

@@ -2,13 +2,15 @@
 In-process llama.cpp backend.
 
 * Loads the GGUF file that Ollama already downloaded (`KV("qwen3:8b", backend="llamacpp")`) or any GGUF path.
-* One llama.cpp context; its KV cache holds the tokens of the last prompt.
-* Only new tokens are evaluated: every call reuses the longest common token prefix already in the cache and cuts
-  the rest in O(1). All logits are available (Ollama returns at most 20 log-probabilities).
+* One llama.cpp context. A prefix that repeats (the option list of an index, the state of a multi-question decision)
+  is evaluated once in a sequence of its own and copied into the working sequence at every call, so only the new
+  tokens are computed. This works on every architecture, including models with recurrent layers; several prefixes
+  stay resident at the same time (`resident=`), least recently used evicted first.
+* Where the model allows removing the tail of a sequence, other prompts also reuse the longest common token prefix
+  with the previous one. All logits are available (Ollama returns at most 20 log-probabilities).
 * Answers by name are decoded through a token trie of the options: the output is always one of the options.
 
 Needs llama-cpp-python (`pip install "kvindex[llamacpp]"`; on Windows also `python -m kvindex.get_llamacpp`).
-Pure-attention models only: recurrent layers (Qwen3.5/3.8, Mamba, ...) cannot be cut back to a prefix.
 """
 from __future__ import annotations
 
@@ -95,7 +97,7 @@ class LlamaCpp:
     """Backend for `KV(model, backend="llamacpp")`."""
 
     def __init__(self, model: str, n_ctx: int = 16384, n_batch: int = 2048, n_gpu_layers: int = -1,
-                 kv_type: str = "f16", verbose: bool = False):
+                 kv_type: str = "f16", verbose: bool = False, resident: int = 8, kv_on_gpu: bool = True):
         L = _llama_cpp()
         self.L = L
         self.model, self.path = model, ollama_gguf(model)
@@ -103,10 +105,10 @@ class LlamaCpp:
         self.llm = L.Llama(self.path, n_ctx=64, n_batch=64, n_gpu_layers=n_gpu_layers, verbose=verbose)
         p = L.llama_context_default_params()
         p.n_ctx, p.n_batch, p.n_ubatch = n_ctx, n_batch, min(512, n_batch)
-        p.n_seq_max, p.kv_unified = 2, True                     # the measured configuration; only sequence 0 is used
+        p.n_seq_max, p.kv_unified = resident + 1, True          # sequence 0 works, the others hold resident prefixes
         p.flash_attn_type = L.LLAMA_FLASH_ATTN_TYPE_ENABLED
         p.type_k = p.type_v = KV_TYPES[kv_type]
-        p.offload_kqv, p.no_perf = True, True
+        p.offload_kqv, p.no_perf = kv_on_gpu, True
         self.ctx = L.llama_init_from_model(self.llm.model, p)
         if not self.ctx:
             raise RuntimeError(f"llama.cpp could not create a context with n_ctx={n_ctx} (out of memory?)")
@@ -114,6 +116,10 @@ class LlamaCpp:
         self.batch = L.llama_batch_init(n_batch, 0, 1)
         self.n_ctx, self.n_batch, self.n_vocab, self.kv_type = n_ctx, n_batch, self.llm.n_vocab(), kv_type
         self.cur: list[int] = []                                # tokens of sequence 0, at positions 0..len-1
+        self.resident = resident
+        self.bases: dict[int, list[int]] = {}                   # resident prefixes: sequence -> tokens, oldest first
+        self._registered: dict[str, None] = {}                  # first-segment texts declared resident by prefill()
+        self.can_cut = bool(L.llama_memory_can_shift(self.mem))  # False for models with recurrent layers
         self._tok_cache: dict[str, list[int]] = {}
         self._tries: dict[tuple, _Trie] = {}
         self._stops = None
@@ -148,9 +154,14 @@ class LlamaCpp:
     def seq_rm(self, seq: int, p0: int = 0, p1: int = -1):
         self.L.llama_memory_seq_rm(self.mem, seq, p0, p1)
 
+    def seq_cp(self, src: int, dst: int):
+        """Copy a whole sequence into another one (cache cells are shared, a recurrent state is copied)."""
+        self.L.llama_memory_seq_cp(self.mem, src, dst, -1, -1)
+
     def clear(self):
         self.L.llama_memory_clear(self.mem, True)
         self.cur = []
+        self.bases = {}
 
     # ---------------------------------------------------------- tokens
     def _chat_wrap(self) -> tuple[str, str]:
@@ -184,31 +195,81 @@ class LlamaCpp:
             self._needs_bos = len(probe) > 1 and probe[0] == self.llm.token_bos()
         return [self.llm.token_bos()] if self._needs_bos else []
 
-    def prompt_tokens(self, segments) -> list[int]:
-        """Tokens of a prompt made of segments, wrapped in the chat template; segments are tokenised separately
-        so that a shared first segment always produces the same token prefix."""
+    def _split(self, segments) -> tuple[list[int], int]:
+        """Tokens of a prompt made of segments (wrapped in the chat template) and the number of tokens of its first
+        segment. Segments are tokenised separately, so a shared first segment always gives the same token prefix."""
         segs = list(segments)
         segs[0] = self._wrap[0] + segs[0]
         segs[-1] = segs[-1] + self._wrap[1]
-        toks = []
-        for s in segs:
-            toks += self._tokens(s)
+        parts = [self._tokens(s) for s in segs]
+        toks = [tok for part in parts for tok in part]
+        n = len(parts[0])
         bos = self.bos()
         if bos and (not toks or toks[0] != bos[0]):
             toks = bos + toks
-        return toks
+            n += len(bos)
+        return toks, n
 
-    def eval_tokens(self, toks: list[int]) -> dict:
-        """Reuse the longest common prefix with sequence 0, evaluate only the rest."""
+    def prompt_tokens(self, segments) -> list[int]:
+        """Tokens of a prompt made of segments, wrapped in the chat template."""
+        return self._split(segments)[0]
+
+    def _room(self, need: int, keep: int | None = None):
+        """Evict the least recently used resident prefixes until `need` more tokens fit in the context."""
+        while sum(len(t) for t in self.bases.values()) + need + 64 > self.n_ctx:
+            victim = next((s for s in self.bases if s != keep), None)
+            if victim is None:
+                raise ValueError(f"prompt of {need} tokens does not fit n_ctx={self.n_ctx}")
+            self.seq_rm(victim, -1, -1)
+            del self.bases[victim]
+
+    def _base(self, prefix: list[int]) -> tuple[int, int]:
+        """Sequence that holds `prefix` as a resident prefix, and the number of tokens evaluated to create it (0 when
+        it was already there)."""
+        for seq, toks in self.bases.items():
+            if toks == prefix:
+                self.bases[seq] = self.bases.pop(seq)
+                return seq, 0
+        self._room(len(prefix))
+        if len(self.bases) >= self.resident:
+            victim = next(iter(self.bases))
+            self.seq_rm(victim, -1, -1)
+            del self.bases[victim]
+        seq = next(s for s in range(1, self.resident + 1) if s not in self.bases)
+        self.seq_rm(seq, -1, -1)
+        self._decode(prefix, 0, seq)
+        self.bases[seq] = list(prefix)
+        return seq, len(prefix)
+
+    def eval_tokens(self, toks: list[int], base_len: int = 0) -> dict:
+        """Evaluate a prompt in sequence 0. With `base_len`, the first `base_len` tokens are a resident prefix: they
+        are evaluated once in a sequence of their own and copied into sequence 0 at every call (every architecture).
+        Without it, where the model allows, the longest common prefix with the previous prompt is reused."""
         if len(toks) + 64 > self.n_ctx:
             raise ValueError(f"prompt of {len(toks)} tokens does not fit n_ctx={self.n_ctx}")
-        common, lim = 0, min(len(self.cur), len(toks) - 1)     # always evaluate >= 1 token for fresh logits
-        while common < lim and self.cur[common] == toks[common]:
-            common += 1
-        self.seq_rm(0, common, -1)
-        self._decode(toks[common:], common, 0)
-        self.cur = list(toks)
-        return {"input_tokens": len(toks) - common, "cached_tokens": common, "output_tokens": 0}
+        if 0 < base_len < len(toks):
+            self.seq_rm(0, -1, -1)
+            self.cur = []
+            seq, made = self._base(toks[:base_len])
+            self._room(len(toks) - base_len, keep=seq)
+            self.seq_cp(seq, 0)
+            self._decode(toks[base_len:], base_len, 0)
+            self.cur = list(toks)
+            return {"input_tokens": len(toks) - base_len + made, "cached_tokens": base_len - made, "output_tokens": 0}
+        else:
+            common = 0
+            if self.can_cut:
+                lim = min(len(self.cur), len(toks) - 1)
+                while common < lim and self.cur[common] == toks[common]:
+                    common += 1
+                self.seq_rm(0, common, -1)
+            else:
+                self.seq_rm(0, -1, -1)
+            self.cur = self.cur[:common]
+            self._room(len(toks))
+            self._decode(toks[common:], common, 0)
+            self.cur = list(toks)
+            return {"input_tokens": len(toks) - common, "cached_tokens": common, "output_tokens": 0}
 
     def _append(self, tok: int):
         self._decode([tok], len(self.cur), 0)
@@ -225,12 +286,23 @@ class LlamaCpp:
     def architecture(self) -> str:
         return str(self.llm.metadata.get("general.architecture", ""))
 
+    def _eval(self, segments) -> dict:
+        """Evaluate a prompt; its first segment is used as a resident prefix when it was declared with `prefill`."""
+        toks, n = self._split(segments)
+        return self.eval_tokens(toks, n if segments[0] in self._registered else 0)
+
     def prefill(self, segments, num_ctx=None) -> dict:
-        return self.eval_tokens(self.prompt_tokens(segments))
+        """Declare the first segment a resident prefix and evaluate it (the offline step of an index)."""
+        key = segments[0]
+        self._registered.pop(key, None)
+        self._registered[key] = None
+        while len(self._registered) > 64:
+            self._registered.pop(next(iter(self._registered)))
+        return self._eval(segments)
 
     def label_logprobs(self, segments, labels, num_ctx=None):
         """log P of each one-token label; the label with and without a leading space are summed."""
-        stats = self.eval_tokens(self.prompt_tokens(segments))
+        stats = self._eval(segments)
         lp = self.logprobs_last()
         out = {}
         for lab in labels:
@@ -241,7 +313,7 @@ class LlamaCpp:
 
     def first_token_logprobs(self, segments, labels):
         """OpenJev's readout: logit of the first token of each label (tokenised alone), as log-probabilities."""
-        stats = self.eval_tokens(self.prompt_tokens(segments))
+        stats = self._eval(segments)
         lp = self.logprobs_last()
         out = {lab: float(lp[self.tokenize(lab)[0]]) for lab in labels}
         stats["output_tokens"] = 1
@@ -249,7 +321,7 @@ class LlamaCpp:
 
     def pick_option(self, segments, options, num_ctx=None, enum_max=None, allowed=None):
         """Greedy decoding constrained to the trie of `options` (of `allowed` when given)."""
-        stats = self.eval_tokens(self.prompt_tokens(segments))
+        stats = self._eval(segments)
         text, total, steps = self.decode_option(options, allowed)
         stats["output_tokens"] = steps
         return text, total, stats

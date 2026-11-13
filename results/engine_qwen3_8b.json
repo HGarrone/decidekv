@@ -1,0 +1,42 @@
+{
+  "qwen3_8b/info": {
+    "architecture": "qwen3",
+    "tail_removal": true
+  },
+  "qwen3_8b/banking77/resident": {
+    "acc": 0.63,
+    "ms": 65.81599999481114,
+    "queries": 100
+  },
+  "qwen3_8b/banking77/recompute": {
+    "acc": 0.66,
+    "ms": 138.1743500023731,
+    "queries": 100
+  },
+  "qwen3_8b/turn15": {
+    "ms": 330.24169999407604,
+    "questions": 15,
+    "computed_tokens": 775,
+    "reused_tokens": 1018
+  },
+  "ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/info": {
+    "architecture": "qwen35",
+    "tail_removal": false
+  },
+  "ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/banking77/resident": {
+    "acc": 0.76,
+    "ms": 173.61075000371784,
+    "queries": 100
+  },
+  "ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/banking77/recompute": {
+    "acc": 0.76,
+    "ms": 504.76570000319043,
+    "queries": 100
+  },
+  "ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/turn15": {
+    "ms": 1250.9959999879356,
+    "questions": 15,
+    "computed_tokens": 805,
+    "reused_tokens": 1033
+  }
+}

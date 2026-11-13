@@ -30,7 +30,10 @@ decision, and how both change when the list grows.
 
 **Cached list.** The prompt starts with the instructions and the whole list of options, followed by the state and
 the question. In a causal LLM the keys and values of a token depend only on the tokens before it, so the cache of
-the list is computed once and reused exactly by every later call. A decision evaluates only the tokens of the state
+the list is computed once and reused exactly by every later call. The list is a *resident prefix*: it lives in a
+sequence of its own and is copied into the working sequence at every decision (cache cells are shared, a recurrent
+state is copied), which makes the reuse available on models with recurrent layers too, and lets several lists stay
+resident at the same time. A decision evaluates only the tokens of the state
 and of the question; these tokens attend to every token of every option. The answer is decoded through a trie of
 the option names, so it is always one of the options, and options already refuted can be excluded from the
 decoding.
@@ -94,7 +97,7 @@ together.
 <!-- table:comparison -->
 | Method | Training | Banking77 (77 intents) | WordNet (200 words) | Typed Decisions | Aim game (games won, time per shot) |
 |---|---|---|---|---|---|
-| **kvindex** | none | 60.3% · 66 ms | 72.7% · 38 ms | 51.3% · 72 ms | 95.0% · 127 ms |
+| **kvindex** | none | 60.7% · 65 ms | 70.7% · 38 ms | 51.1% · 62 ms | 95.0% · 159 ms |
 | **kvindex, trained catalogue** | on the task | 93.0% · 15 ms | – | – | – |
 | OpenJev architecture, shared prompt | none | 39.7% · 90 ms | 63.3% · 132 ms | 59.3% · 67 ms | 25.0% · 423 ms |
 | OpenJev library, own prompt, Ollama | none | 44.0% · 117 ms | 22.7% · 164 ms | 58.1% · 62 ms | 25.0% · 469 ms |
@@ -131,9 +134,9 @@ seconds: one pass over the list, or one embedding per option. Accuracy falls as 
 | Options | kvindex | OpenJev architecture | CLM-8B as released | CLM-8B, heads fine-tuned |
 |---|---|---|---|---|
 | 200 | 72.7% · 40 ms | 63.3% · 132 ms | 12.7% · 21 ms | 26.0% · 21 ms |
-| 1,000 | 62.7% · 42 ms | not supported (max 255) | 4.7% · 21 ms | 16.7% · 21 ms |
+| 1,000 | 62.0% · 41 ms | not supported (max 255) | 4.7% · 21 ms | 16.7% · 21 ms |
 | 3,000 | 57.3% · 50 ms | not supported (max 255) | 4.0% · 21 ms | 10.7% · 21 ms |
-| 10,000 | 50.7% · 94 ms | not supported (max 255) | 3.3% · 21 ms | 8.7% · 21 ms |
+| 10,000 | 50.7% · 81 ms | not supported (max 255) | 3.3% · 21 ms | 8.7% · 21 ms |
 | 30,000 | 46.0% · 103 ms | not supported (max 255) | not measured | not measured |
 <!-- /table:scale150 -->
 
@@ -174,11 +177,33 @@ A catalogue trained with the examples of half of the intents only:
 The training helps the options it has seen and harms the others. A trained catalogue should be used when the
 examples cover the options.
 
+### Resident prefix on any architecture
+
+100 Banking77 messages, the same model with the option list resident in the cache and with the whole prompt
+recomputed at every decision; then one turn of 15 typed questions (4 `Score`, 11 `Noul`) about one state:
+
+<!-- table:engine -->
+| Model | Architecture | Banking77, list resident | Banking77, prompt recomputed | Turn of 15 typed questions on one state |
+|---|---|---|---|---|
+| Qwen3-8B (36 attention layers) | qwen3 | 63.0% · 66 ms | 66.0% · 138 ms | 330 ms |
+| Qwen3.8-27B (hybrid: recurrent + attention layers, IQ2_S) | qwen35 | 76.0% · 174 ms | 76.0% · 505 ms | 1,251 ms |
+<!-- /table:engine -->
+
+On Qwen3-8B the two Banking77 accuracies differ by three messages out of 100: llama.cpp evaluates the tail of the
+prompt in one chunk after the resident prefix and the whole prompt in another grouping when it recomputes,
+which moves probabilities by up to a few hundredths on near ties. On the hybrid model the numbers coincide.
+
+On the hybrid model the resident prefix is the only reuse available: the engine cannot remove the tail of a
+sequence, so without it every decision recomputes the list. The reuse is exact on both models (checks 3 to 5 of
+`benchmarks/checks.py`: the logits equal those of decoding without a cache, and resident prefixes do not leak into
+each other). A turn of 15 questions costs the state once per question; sharing the state across questions is a
+possible next step.
+
 ## Limits
 
-- Pure-attention models only: models with recurrent layers cannot reuse a cached prefix.
-- The cached list must fit in the context and in GPU memory.
-- One list is cached at a time; alternating between lists recomputes the list that comes back.
+- The cached lists must fit in the context and in memory.
+- Each decision recomputes the state; a turn of many questions about one state pays the state once per question.
+- The probabilities of an answer by name cover the decoded option only.
 - The trained catalogue was measured on one dataset.
 - The reference rows were not re-measured under the shared prompt, except CLM-8B as released on Banking77 (same
   accuracy).
@@ -194,6 +219,7 @@ python benchmarks/baselines.py --task aim --methods kvindex,openjev
 python benchmarks/scale.py --sizes 1000,3000,10000,30000
 python benchmarks/scale.py --sizes 200,1000,3000,10000,30000 --queries 150 --core 200
 python benchmarks/train_bench.py
+python benchmarks/engine_bench.py --models qwen3:8b,hf.co/ISTA-DASLab/Qwen3.8-27B-GSQ-RCO-GGUF:IQ2_S
 python benchmarks/report.py                    # tables of this article and of the README
 python paper/figures.py                        # figures
 ```

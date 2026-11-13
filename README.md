@@ -14,7 +14,11 @@ at every list size.
   projection of the embedding vectors is trained; the LLM is never trained.
 
 It speaks the `Choice` / `Score` / `Noul` question types of [OpenJev](https://github.com/GPT-AGI/OpenJev), runs on
-any GGUF model that [Ollama](https://ollama.com) has downloaded, and works with any embedding model.
+any GGUF model that [Ollama](https://ollama.com) has downloaded (pure-attention and hybrid recurrent models alike),
+and works with any embedding model.
+
+The measurements and their protocol are written up in **[paper/kvindex.md](paper/kvindex.md)**; this README has the
+instructions and the same tables.
 
 ```python
 from kvindex import KV
@@ -136,13 +140,38 @@ kv = KV("qwen3:8b", embed=my_function)          # my_function(list_of_texts) -> 
 The default template, `"Instruct: {question}\nQuery:{state}"`, suits instruction-tuned embedding models such as
 Qwen3-Embedding.
 
+### Prompts in another language
+
+The fixed words of the prompt are templates (`kvindex.core.WORDING`); override them for your language:
+
+```python
+italian = {"intro": "Sei un motore di decisione.{task} Rispondi alla domanda sul {state} scegliendo un {noun} "
+                    "dalla lista di {plural}. {reply}
+
+",
+           "reply_name": "Rispondi con l'{noun} esattamente come scritto nella lista{part}, e nient'altro.",
+           "part": " (solo la parte prima dei due punti)", "plural": "intenti",
+           "question": "Quale {noun} corrisponde al {state}?", "question_title": "Domanda"}
+intenti = kv.index(["arrivo carta", "carta rubata"], noun="intento", state_label="Messaggio", wording=italian)
+```
+
 ### Engines
 
 `KV(model)` runs llama.cpp in the Python process and reads the GGUF file from Ollama's model folder (or a `.gguf`
-path). `n_ctx` (16,384 tokens by default) must hold the option list; `kv_type="q8_0"` halves the memory of the
-cache. `KV(model, backend="ollama")` talks to the Ollama server instead: it gives the same kind of answers, but the
-confidence of a choice is not available there (it is reported as 0) and every number below was measured with the
-llama.cpp engine. Call `kv.close()` to free the GPU.
+path). The option list of an index is a *resident prefix*: it is evaluated once in a sequence of its own and copied
+into the working sequence at every decision, so only the new tokens are computed. This works on every architecture,
+including models with recurrent layers (Qwen3.5/3.8, Mamba, Jamba…), and up to `resident` lists (8 by default,
+`KV(model, resident=...)`) stay cached at the same time, so alternating between indexes recomputes nothing.
+
+`n_ctx` (16,384 tokens by default) must hold the option lists; `kv_type="q8_0"` halves the memory of the cache;
+`kv_on_gpu=False` keeps the cache in system memory when the weights fill the GPU. `KV(model, backend="ollama")`
+talks to the Ollama server instead: it gives the same kind of answers, but the confidence of a choice is not available
+there (it is reported as 0), the server recomputes the list on hybrid models, and every number below was measured
+with the llama.cpp engine. Call `kv.close()` to free the GPU.
+
+Above 3,000 options the catalogue vectors can be kept on disk between runs:
+`kv.index(options, vectors=Catalog.cached(texts, kv.encoder, "cache_folder"))` with `from kvindex.catalog import
+Catalog` (at 30,000 options this saves about 30 seconds per start).
 
 ## How it works
 
@@ -155,8 +184,9 @@ up to flat_max options                         above flat_max, or with a trained
 ```
 
 In a causal LLM the keys and values of a token depend only on the tokens before it. With the options first and
-unchanged, their KV cache is computed once and reused exactly by every later call; the state's tokens then attend
-to every token of every option. The answer is decoded through a trie of the option names, so it is always one of
+unchanged, their KV cache is computed once and reused exactly by every later call (the cells are shared by the
+working sequence; on models with recurrent layers the recurrent state is copied, a few milliseconds); the state's
+tokens then attend to every token of every option. The answer is decoded through a trie of the option names, so it is always one of
 the options. Above a few thousand options the list no longer pays for itself in the cache, and the standard
 retrieve-then-rerank pipeline takes over.
 
@@ -171,7 +201,7 @@ generated from the files in `results/` by `python benchmarks/report.py`.
 <!-- table:comparison -->
 | Method | Training | Banking77 (77 intents) | WordNet (200 words) | Typed Decisions | Aim game (games won, time per shot) |
 |---|---|---|---|---|---|
-| **kvindex** | none | 60.3% · 66 ms | 72.7% · 38 ms | 51.3% · 72 ms | 95.0% · 127 ms |
+| **kvindex** | none | 60.7% · 65 ms | 70.7% · 38 ms | 51.1% · 62 ms | 95.0% · 159 ms |
 | **kvindex, trained catalogue** | on the task | 93.0% · 15 ms | – | – | – |
 | OpenJev architecture, shared prompt | none | 39.7% · 90 ms | 63.3% · 132 ms | 59.3% · 67 ms | 25.0% · 423 ms |
 | OpenJev library, own prompt, Ollama | none | 44.0% · 117 ms | 22.7% · 164 ms | 58.1% · 62 ms | 25.0% · 469 ms |
@@ -211,9 +241,9 @@ The same task with 150 definitions, next to the tools that were measured on it:
 | Options | kvindex | OpenJev architecture | CLM-8B as released | CLM-8B, heads fine-tuned |
 |---|---|---|---|---|
 | 200 | 72.7% · 40 ms | 63.3% · 132 ms | 12.7% · 21 ms | 26.0% · 21 ms |
-| 1,000 | 62.7% · 42 ms | not supported (max 255) | 4.7% · 21 ms | 16.7% · 21 ms |
+| 1,000 | 62.0% · 41 ms | not supported (max 255) | 4.7% · 21 ms | 16.7% · 21 ms |
 | 3,000 | 57.3% · 50 ms | not supported (max 255) | 4.0% · 21 ms | 10.7% · 21 ms |
-| 10,000 | 50.7% · 94 ms | not supported (max 255) | 3.3% · 21 ms | 8.7% · 21 ms |
+| 10,000 | 50.7% · 81 ms | not supported (max 255) | 3.3% · 21 ms | 8.7% · 21 ms |
 | 30,000 | 46.0% · 103 ms | not supported (max 255) | not measured | not measured |
 <!-- /table:scale150 -->
 
@@ -244,6 +274,22 @@ A catalogue trained with the examples of half of the intents only:
 | Had no training example (38 intents) | 65.3% | 21.1% |
 <!-- /table:heldout -->
 
+### Engine: resident prefix on any architecture
+
+100 Banking77 messages, the same model with the option list resident in the cache and with the whole prompt
+recomputed at every decision; then one turn of 15 typed questions (4 `Score`, 11 `Noul`) about one state:
+
+<!-- table:engine -->
+| Model | Architecture | Banking77, list resident | Banking77, prompt recomputed | Turn of 15 typed questions on one state |
+|---|---|---|---|---|
+| Qwen3-8B (36 attention layers) | qwen3 | 63.0% · 66 ms | 66.0% · 138 ms | 330 ms |
+| Qwen3.8-27B (hybrid: recurrent + attention layers, IQ2_S) | qwen35 | 76.0% · 174 ms | 76.0% · 505 ms | 1,251 ms |
+<!-- /table:engine -->
+
+On Qwen3-8B the two Banking77 accuracies differ by three messages out of 100: llama.cpp evaluates the tail of the
+prompt in one chunk after the resident prefix and the whole prompt in another grouping when it recomputes,
+which moves probabilities by up to a few hundredths on near ties. On the hybrid model the numbers coincide.
+
 ### Reading the numbers
 
 - Without training, kvindex is ahead of the OpenJev architecture on three tasks out of four and behind it on Typed
@@ -257,10 +303,11 @@ A catalogue trained with the examples of half of the intents only:
 
 ## Limits
 
-- Pure-attention models only (Qwen3, Llama, Mistral, Gemma). Models with recurrent layers cannot reuse a cached
-  prefix.
-- The cached list must fit in `n_ctx` and in GPU memory: about 78 KB per token for Qwen3-8B with `q8_0`.
-- One list is cached at a time: alternating between lists recomputes the list that comes back.
+- The cached lists must fit in `n_ctx` and in memory: about 78 KB per token for Qwen3-8B with `q8_0`; a 27B model
+  with 9.3 GB of weights and a 16,384-token context used 11.5 GB on a 12 GB GPU.
+- Each decision recomputes the state: a turn of many questions about one state pays the state once per question.
+- The probabilities of an answer by name cover the decoded option only; `labels=True` gives every option's
+  probability but is limited to 52 options.
 - Accuracy on open vocabularies falls as the list grows (see the tables); the tool does not hide it.
 - A trained head helps the options it has seen and hurts the others.
 

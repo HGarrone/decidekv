@@ -56,6 +56,18 @@ def parse_options(options: Any) -> tuple[list[str], list[str], list[str]]:
     return keys, descs, texts
 
 
+WORDING = {
+    "intro": "You are a decision engine.{task} Answer the question about the {state} by choosing one {noun} from the "
+             "list of {plural}. {reply}\n\n",
+    "reply_name": "Reply with the {noun} exactly as written in the list{part}, and nothing else.",
+    "reply_label": "Reply with the label of the {noun} (the text before the colon), and nothing else.",
+    "part": " (only the part before the colon)",
+    "plural": "{noun}s",
+    "question": "Which {noun} best matches the {state}?",
+    "question_title": "Question",
+}
+
+
 class Index:
     """A fixed set of options, pre-filled into the model's KV cache. Create it with `KV.index(...)`.
 
@@ -68,15 +80,17 @@ class Index:
     Name things for the model: `noun` ("intent", "word", "tool"…), `state_label` ("Customer message",
     "Definition"…) and `question` become part of the cached prompt. A domain-specific prompt measured up
     to +16 points over a generic one.
+    `wording` overrides the fixed words of the prompt (keys of `WORDING`): for prompts in another language.
     """
 
     def __init__(self, kv: "KV", options: Any, labels: Any = False, task: str | None = None,
                  question: str | None = None, noun: str = "option", state_label: str = "State",
-                 enum_max: int = 500, warm: bool = True):
+                 enum_max: int = 500, warm: bool = True, wording: dict | None = None):
         self.kv = kv
         self.keys, self.descs, self.texts = parse_options(options)
         self.n = len(self.keys)
         self.task, self.question, self.noun, self.state_label = task, question, noun, state_label
+        self.wording = {**WORDING, **(wording or {})}
         if isinstance(labels, (list, tuple)):
             self.labels = list(labels)
         elif labels:
@@ -96,15 +110,15 @@ class Index:
     # The same five blocks, with the same words, are used by every architecture; only their order and the way
     # the answer is read change. kvindex uses: [intro + options] (cached) | [state] | [question + answer head].
     def intro(self) -> str:
-        noun, plural = self.noun, self.noun + "s"
+        noun, plural = self.noun, self.wording["plural"].format(noun=self.noun)
         task = f" {self.task.strip()}" if self.task else ""
         if self.labels:
-            reply = f"Reply with the label of the {noun} (the text before the colon), and nothing else."
+            reply = self.wording["reply_label"].format(noun=noun)
         else:
-            part = " (only the part before the colon)" if self.texts != self.keys else ""
-            reply = f"Reply with the {noun} exactly as written in the list{part}, and nothing else."
-        return (f"You are a decision engine.{task} Answer the question about the {self.state_label.lower()} "
-                f"by choosing one {noun} from the list of {plural}. {reply}\n\n")
+            part = self.wording["part"] if self.texts != self.keys else ""
+            reply = self.wording["reply_name"].format(noun=noun, part=part)
+        return self.wording["intro"].format(task=task, state=self.state_label.lower(), noun=noun, plural=plural,
+                                             reply=reply)
 
     def options_block(self) -> str:
         if self.labels:
@@ -113,14 +127,15 @@ class Index:
                              for lab, k_, d, t in zip(self.labels, self.keys, self.descs, self.texts))
         else:
             body = "\n".join(f"- {t}" for t in self.texts)
-        return f"### {(self.noun + 's').capitalize()}\n{body}\n\n"
+        return f"### {self.wording['plural'].format(noun=self.noun).capitalize()}\n{body}\n\n"
 
     def state_block(self, state: Any) -> str:
         return f"### {self.state_label}\n{render_state(state)}\n\n"
 
     def question_block(self, instructions: str | None) -> str:
-        q = instructions or self.question or f"Which {self.noun} best matches the {self.state_label.lower()}?"
-        return f"### Question\n{q}\n\n"
+        q = instructions or self.question or self.wording["question"].format(noun=self.noun,
+                                                                                 state=self.state_label.lower())
+        return f"### {self.wording['question_title']}\n{q}\n\n"
 
     def answer_head(self) -> str:
         return f"### {self.noun.capitalize()}\n"
@@ -271,10 +286,10 @@ class KV:
             return
         self._arch_checked = True
         arch = self.client.architecture()
-        if arch in HYBRID_ARCHS:
-            warnings.warn(f"{self.model} uses a hybrid recurrent architecture ({arch}): Ollama cannot reuse a "
-                          "partial prefix, so answers stay correct but each call recomputes the options. "
-                          "Use a pure-attention model for the speed-up.", stacklevel=3)
+        if arch in HYBRID_ARCHS and self.backend == "ollama":
+            warnings.warn(f"{self.model} uses a hybrid recurrent architecture ({arch}): the Ollama server cannot "
+                          "reuse a partial prefix, so answers stay correct but each call recomputes the options. "
+                          'Use backend="llamacpp" (resident prefixes work on every architecture).', stacklevel=3)
 
     @property
     def encoder(self):
@@ -337,7 +352,7 @@ class KV:
         key = (tuple(options.items()) if isinstance(options, dict) else tuple(options), task, question, noun,
                state_label, tuple(labels) if isinstance(labels, (list, tuple)) else bool(labels), k,
                head if isinstance(head, str) else id(head) if head is not None else None,
-               tuple(sorted(kw.items())))
+               tuple(sorted((k_, repr(v)) for k_, v in kw.items())))
         if key not in self._indexes:
             if head is not None or len(options) > self.flat_max:
                 if labels:
