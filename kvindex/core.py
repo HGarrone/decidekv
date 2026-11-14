@@ -171,19 +171,39 @@ class Index:
 
     # ------------------------------------------------------------ answering
     def choose(self, state: Any, instructions: str | None = None, usage: Usage | None = None,
-               exclude: Iterable[str] = ()) -> ChoiceAnswer:
+               exclude: Iterable[str] = (), full: bool = False) -> ChoiceAnswer:
         """Pick the best option for `state` (one call to the LLM).
 
         `exclude` removes options from the choice (e.g. attempts already refuted by the environment in a
-        trial-and-error loop): the decoding constraint makes them impossible to pick, not just discouraged."""
+        trial-and-error loop): the decoding constraint makes them impossible to pick, not just discouraged.
+        `full=True` scores every option (the log-probability of its tokens, normalised over the options) instead of
+        decoding the best one greedily: `probabilities` then covers all the options. It costs one forward pass per
+        distinct token prefix of the options, so use it with a few dozen options or when the distribution matters."""
         excluded = set(exclude)
         allowed = [k_ for k_ in self.keys if k_ not in excluded] if excluded else self.keys
         if not allowed:
             raise ValueError("every option is excluded")
         usage = usage if usage is not None else Usage()
+        if full and not self.labels:
+            return self._choose_scored(state, instructions, usage, allowed)
         if self.labels:
             return self._choose_labels(state, instructions, usage, allowed)
         return self._choose_name(state, instructions, usage, allowed)
+
+    def scores(self, state: Any, instructions: str | None = None, allowed: Iterable[str] | None = None,
+               usage: Usage | None = None) -> dict[str, float]:
+        """log P of every option for `state` (normalised over `allowed`, all options when None)."""
+        allowed = list(allowed) if allowed is not None else self.keys
+        lps, st = self.kv.client.score_options(self.segments(state, instructions), self.keys, allowed=allowed)
+        self._account(st, usage if usage is not None else Usage())
+        return lps
+
+    def _choose_scored(self, state, instructions, usage, allowed) -> ChoiceAnswer:
+        lps = self.scores(state, instructions, allowed, usage)
+        probs = softmax(lps)
+        full = {k_: round(probs.get(k_, 0.0), 6) for k_ in self.keys}
+        best = max(probs, key=probs.get)
+        return ChoiceAnswer(choice=best, probabilities=full, confidence=round(confidence(list(full.values())), 4))
 
     @staticmethod
     def _account(st: dict, usage: Usage):
@@ -378,11 +398,13 @@ class KV:
         return idx.choose(state, instructions)
 
     def decide(self, state: Any, questions: dict[str, Any] | Any = None, temperature: float = 1.0,
-               labels: bool = False) -> Response:
+               labels: bool = False, full: bool = False) -> Response:
         """OpenJev / Jev-style: several typed questions about one state.
 
         `questions` maps ids to `Choice`, `Score` or `Noul` (these classes, OpenJev's, or plain dicts with a
         "type" field). An OpenJev `SystemOneRequest` can be passed as the only argument.
+        `full=True` gives `Choice` answers the probability of every option (see `Index.choose`); `Score` and `Noul`
+        answers always carry the probability of every level.
         """
         if questions is None and hasattr(state, "questions"):
             state, questions = state.state, state.questions
@@ -390,7 +412,7 @@ class KV:
         usage, answers = Usage(), {}
         for qid, q in questions.items():
             q, idx, instructions = self.question_index(q, labels=labels)
-            a = idx.choose(state, instructions, usage)
+            a = idx.choose(state, instructions, usage, full=full and q.type == "choice")
             if q.type == "choice":
                 if temperature != 1.0 and a.probabilities:
                     a = _retemper(a, temperature)

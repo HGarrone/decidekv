@@ -21,6 +21,8 @@ import math
 import os
 import sys
 
+from .ollama import HYBRID_ARCHS
+
 KV_TYPES = {"f16": 1, "q8_0": 8}          # ggml type ids
 
 
@@ -97,15 +99,18 @@ class LlamaCpp:
     """Backend for `KV(model, backend="llamacpp")`."""
 
     def __init__(self, model: str, n_ctx: int = 16384, n_batch: int = 2048, n_gpu_layers: int = -1,
-                 kv_type: str = "f16", verbose: bool = False, resident: int = 7, kv_on_gpu: bool = True):
+                 kv_type: str = "f16", verbose: bool = False, resident: int = 7, kv_on_gpu: bool = True,
+                 scratch: int | None = None):
         L = _llama_cpp()
         self.L = L
         self.model, self.path = model, ollama_gguf(model)
         # weights, tokenizer and metadata; the high-level object's own context is tiny and never used
         self.llm = L.Llama(self.path, n_ctx=64, n_batch=64, n_gpu_layers=n_gpu_layers, verbose=verbose)
+        hybrid = str(self.llm.metadata.get("general.architecture", "")) in HYBRID_ARCHS
+        self.scratch = (0 if hybrid else 32) if scratch is None else scratch   # sequences for batched option scoring
         p = L.llama_context_default_params()
         p.n_ctx, p.n_batch, p.n_ubatch = n_ctx, n_batch, min(512, n_batch)
-        p.n_seq_max, p.kv_unified = resident + 1, True          # sequence 0 works, the others hold resident prefixes
+        p.n_seq_max, p.kv_unified = resident + 1 + self.scratch, True   # 0 works, then resident prefixes, then scratch
         # more than 8 sequences in total make models with recurrent layers up to 10x slower (llama.cpp b11312)
         p.flash_attn_type = L.LLAMA_FLASH_ATTN_TYPE_ENABLED
         p.type_k = p.type_v = KV_TYPES[kv_type]
@@ -352,6 +357,165 @@ class LlamaCpp:
             steps += 1
             self._append(best_tok)
         return node.end, total, steps
+
+    def _paths(self, root, ok):
+        """Every token path from the root of the option trie to a node that ends an option of `ok`, with that
+        option: a list of (tokens, option)."""
+        result = []
+        stack = [(root, [])]
+        while stack:
+            node, path = stack.pop()
+            if node.opts.isdisjoint(ok):
+                continue
+            if node.end is not None and node.end in ok:
+                result.append((path, node.end))
+            if node.kids:
+                for tok, child in node.kids.items():
+                    stack.append((child, path + [tok]))
+        return result
+
+    def _score_batched(self, paths, L, lp0, seqs):
+        """log P of each path after the prompt in sequence 0 (length L): many paths per llama_decode, each in one of
+        the free sequences `seqs`. `lp0` are the log-probabilities after the prompt. Returns one float per path."""
+        import numpy as np
+        out = [0.0] * len(paths)
+        i = 0
+        while i < len(paths):
+            j = i
+            used = 0
+            while j < len(paths) and j - i < len(seqs) and used + len(paths[j][0]) <= self.n_batch:
+                used += len(paths[j][0])
+                j += 1
+            if j == i:
+                raise ValueError("option name longer than n_batch tokens")
+            b = self.batch
+            n = 0
+            rows = []
+            k_out = 0
+            for c, (toks, _) in enumerate(paths[i:j]):
+                seq = seqs[c]
+                self.seq_rm(seq, -1, -1)
+                self.seq_cp(0, seq)
+                r = []
+                for t_i, tok in enumerate(toks):
+                    b.token[n] = tok
+                    b.pos[n] = L + t_i
+                    b.n_seq_id[n] = 1
+                    b.seq_id[n][0] = seq
+                    keep = t_i < len(toks) - 1
+                    b.logits[n] = 1 if keep else 0
+                    if keep:
+                        r.append(k_out)
+                        k_out += 1
+                    n += 1
+                rows.append(r)
+            b.n_tokens = n
+            if k_out > 0:
+                rc = self.L.llama_decode(self.ctx, b)
+                if rc != 0:
+                    raise RuntimeError(f"llama_decode failed with code {rc}")
+                ptr = self.L.llama_get_logits(self.ctx)
+                x = np.ctypeslib.as_array(ptr, shape=(k_out, self.n_vocab))
+                m = x.max(axis=1)
+                e = x - m[:, None]
+                np.exp(e, out=e)
+                lse = m + np.log(e.sum(axis=1))
+            else:
+                x = None
+                lse = None
+            for c, (toks, _) in enumerate(paths[i:j]):
+                s = float(lp0[toks[0]])
+                if x is not None:
+                    for t_i in range(1, len(toks)):
+                        row = rows[c][t_i - 1]
+                        s += float(x[row, toks[t_i]] - lse[row])
+                out[i + c] = s
+            for c in range(j - i):
+                self.seq_rm(seqs[c], -1, -1)
+            i = j
+        return out
+
+    def score_options(self, segments, options, allowed=None, floor: float = 1e-6):
+        """log P of every option (sum over its tokens, summed over its surface variants), normalised over the options
+        of `allowed` (all of them when None), and the stats of the prompt evaluation. Exact on every architecture.
+        Many option paths are evaluated in one call, each in a free sequence (the reserved `scratch` ones and the
+        resident slots not in use); with no free sequence the trie is walked one node at a time. A path whose
+        probability falls below `floor` is not followed further (after its first token in the batched mode, at any
+        depth in the walk): its value is that probability, an upper bound with an error below `floor`."""
+        stats = self._eval(segments)
+        prompt = list(self.cur)
+        L = len(prompt)
+        ok = set(allowed) if allowed is not None else set(options)
+        root = self._trie(options)
+        mass = {}
+        base = None if self.can_cut else self._base(prompt)[0]
+        steps = 0
+
+        def logits_after(path):
+            nonlocal steps
+            if self.can_cut:
+                if path:
+                    self.seq_rm(0, L + len(path) - 1, -1)
+                    self._decode(path[-1:], L + len(path) - 1, 0)
+            else:
+                self.seq_rm(0, -1, -1)
+                self.seq_cp(base, 0)
+                if path:
+                    self._decode(path, L, 0)
+            steps += 1
+            return self.logprobs_last()
+
+        def visit(node, path, acc, lp):
+            for tok, child in node.kids.items():
+                if child.opts.isdisjoint(ok):
+                    continue
+                val = acc + float(lp[tok])
+                if val < math.log(floor):
+                    if child.end is None or child.end not in ok:
+                        for name in child.opts & ok:
+                            mass[name] = val if name not in mass else max(mass[name], val)
+                        continue
+                if child.end is not None and child.end in ok:
+                    if child.end not in mass:
+                        mass[child.end] = val
+                    else:
+                        m = max(mass[child.end], val)
+                        mass[child.end] = math.log(math.exp(mass[child.end] - m) + math.exp(val - m)) + m
+                if child.kids and not all(c.opts.isdisjoint(ok) for c in child.kids.values()):
+                    visit(child, path + [tok], val, logits_after(path + [tok]))
+
+        lp = self.logprobs_last()
+        free = [s for s in range(1, self.resident + 1 + self.scratch) if s not in self.bases]
+        if free:
+            paths = self._paths(root, ok)
+            cut = math.log(floor)
+            deep = [p for p in paths if float(lp[p[0][0]]) >= cut]
+            vals = dict(zip(map(id, deep), self._score_batched(deep, L, lp, free)))
+            for p in paths:
+                toks, name = p
+                val = vals[id(p)] if id(p) in vals else float(lp[toks[0]])
+                if name not in mass:
+                    mass[name] = val
+                else:
+                    m = max(mass[name], val)
+                    mass[name] = math.log(math.exp(mass[name] - m) + math.exp(val - m)) + m
+            steps = -(-len(deep) // len(free))
+        else:
+            visit(root, [], 0.0, lp)
+
+        if self.can_cut:
+            self.seq_rm(0, L, -1)
+        else:
+            self.seq_rm(0, -1, -1)
+            self.seq_cp(base, 0)
+        self.cur = prompt
+
+        names = [o for o in options if o in ok]
+        z = max(mass.get(o, -1e30) for o in names)
+        logz = z + math.log(sum(math.exp(mass.get(o, -1e30) - z) for o in names))
+        out = {o: mass.get(o, -1e30) - logz for o in names}
+        stats["output_tokens"] = steps
+        return out, stats
 
     def _stop_ids(self) -> set[int]:
         """Every end-of-generation token of the model (eos, <|eot_id|>, <|im_end|>, ...) plus newline."""

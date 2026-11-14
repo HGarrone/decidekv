@@ -50,6 +50,17 @@ class FakeClient:
         best = next((o for o in pool if o.lower() in state or desc.get(o, "") in state), pool[-1])
         return best, math.log(0.8), {"input_tokens": 10, "cached_tokens": 90, "output_tokens": 3}
 
+    def score_options(self, segments, options, allowed=None):
+        self.prompts.append("".join(segments))
+        state, lines = self._parse(segments)
+        desc = {ln[2:].split(": ", 1)[0]: ln[2:].split(": ", 1)[-1].lower() for ln in lines}
+        pool = list(allowed) if allowed is not None else list(options)
+        best = next((o for o in pool if o.lower() in state or desc.get(o, "") in state), pool[-1])
+        if len(pool) == 1:
+            return ({pool[0]: math.log(1.0)}, {"input_tokens": 10, "cached_tokens": 90, "output_tokens": 1})
+        return ({o: math.log(0.7) if o == best else math.log(0.3 / (len(pool) - 1)) for o in pool},
+                {"input_tokens": 10, "cached_tokens": 90, "output_tokens": len(pool)})
+
 
 WORDS = ["zebra", "milk", "piano", "hammer", "window", "garden", "rocket", "butter"]
 
@@ -66,6 +77,7 @@ class FakeEncoder:
                     v[ord(ch) - 97] += 1
             out.append(v / (np.linalg.norm(v) + 1e-12))
         return np.stack(out)
+
 
 
 def make_kv(**kw):
@@ -285,3 +297,25 @@ def test_catalog_vectors_are_cached_on_disk(tmp_path):
     v3 = Catalog.cached(texts + ["date"], enc, str(tmp_path))
     assert v3.shape[0] == 4
     assert len(list(tmp_path.glob("*.npy"))) == 2
+
+
+def test_full_probabilities_cover_every_option():
+    kv = make_kv()
+    idx = kv.index(["card arrival", "lost card", "refund"])
+    a = idx.choose("where is my card arrival status", full=True)
+    assert a.choice == "card arrival"
+    assert set(a.probabilities) == {"card arrival", "lost card", "refund"}
+    assert abs(sum(a.probabilities.values()) - 1) < 1e-6
+    assert a.probabilities["card arrival"] > 0.6
+    b = idx.choose("where is my card arrival status")
+    assert b.choice == "card arrival" and set(b.probabilities) == {"card arrival"}
+
+
+def test_scores_respect_exclusions():
+    kv = make_kv()
+    idx = kv.index(["card arrival", "lost card", "refund"])
+    s = idx.scores("where is my card arrival status", allowed=["lost card", "refund"])
+    assert set(s) == {"lost card", "refund"}
+    assert abs(sum(math.exp(v) for v in s.values()) - 1) < 1e-6
+    a = idx.choose("where is my card arrival status", exclude=["card arrival"], full=True)
+    assert a.choice != "card arrival" and a.probabilities["card arrival"] == 0.0

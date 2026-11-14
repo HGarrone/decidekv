@@ -220,7 +220,8 @@ possible next step.
 
 - The cached lists must fit in the context and in memory.
 - Each decision recomputes the state; a turn of many questions about one state pays the state once per question.
-- The probabilities of an answer by name cover the decoded option only.
+- The probability of every option (`full=True`) costs as much as a greedy decision on Qwen3-8B (50 ms for 77
+  options) and about 2.3 s on the hybrid 27B.
 - The trained catalogue was measured on one dataset.
 - The reference rows were not re-measured under the shared prompt, except CLM-8B as released on Banking77 (same
   accuracy).

@@ -71,6 +71,12 @@ answer.choice        # 'book_hotel'
 answer.confidence    # probability of the decoded answer
 ```
 
+`tools.choose(state, full=True)` returns the probability of every option in `answer.probabilities` instead of
+the decoded one only (also `kv.decide(..., full=True)` and `tools.scores(state)` for the raw log-probabilities).
+Options whose probability falls below 10⁻⁶ are bounded instead of computed. On Qwen3-8B with the 77 intents of
+Banking77 this costs 50 ms per decision, the same as the greedy choice; on the hybrid 27B about 2.3 s, because
+llama.cpp can evaluate few sequences at once on models with recurrent layers.
+
 Options are a list of names or a `{name: description}` dictionary. `noun`, `state_label` and `question` are
 written into the prompt: naming things for the model helps.
 
@@ -324,8 +330,7 @@ which moves probabilities by up to a few hundredths on near ties. On the hybrid 
 - The cached lists must fit in `n_ctx` and in memory: about 78 KB per token for Qwen3-8B with `q8_0`; a 27B model
   with 9.3 GB of weights and a 16,384-token context used 11.5 GB on a 12 GB GPU.
 - Each decision recomputes the state: a turn of many questions about one state pays the state once per question.
-- The probabilities of an answer by name cover the decoded option only; `labels=True` gives every option's
-  probability but is limited to 52 options.
+- `full=True` (probability of every option) is cheap on attention-only models and slow on hybrid models.
 - Accuracy on open vocabularies falls as the list grows (see the tables); the tool does not hide it.
 - A trained head helps the options it has seen and hurts the others.
 
