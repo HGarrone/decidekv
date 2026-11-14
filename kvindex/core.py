@@ -65,6 +65,7 @@ WORDING = {
     "plural": "{noun}s",
     "question": "Which {noun} best matches the {state}?",
     "question_title": "Question",
+    "shared_intro": "You are a decision engine. Questions about the {state} below follow, one at a time.\n\n",
 }
 
 
@@ -146,9 +147,14 @@ class Index:
 
     def segments(self, state: Any, instructions: str | None, order: str = "options-first") -> tuple[str, str, str]:
         """options-first: [intro + options] [state] [question + head]; the first segment is shared by every
-        call, so the backend keeps it in the KV cache. state-first: [intro + state] [question] [options + head]."""
+        call, so the backend keeps it in the KV cache. state-first: [intro + state] [question] [options + head].
+        shared-state: [shared intro + state] [intro + options] [question + head]; the same first segment for
+        every question about one state."""
         if order == "options-first":
             return (self.prefix, self.state_block(state), self.question_block(instructions) + self.answer_head())
+        if order == "shared-state":
+            head = self.wording["shared_intro"].format(state=self.state_label.lower())
+            return (head + self.state_block(state), self.prefix, self.question_block(instructions) + self.answer_head())
         return (self._intro + self.state_block(state), self.question_block(instructions),
                 self._options + self.answer_head())
 
@@ -171,35 +177,42 @@ class Index:
 
     # ------------------------------------------------------------ answering
     def choose(self, state: Any, instructions: str | None = None, usage: Usage | None = None,
-               exclude: Iterable[str] = (), full: bool = False) -> ChoiceAnswer:
+               exclude: Iterable[str] = (), full: bool = False, order: str = "options-first") -> ChoiceAnswer:
         """Pick the best option for `state` (one call to the LLM).
 
         `exclude` removes options from the choice (e.g. attempts already refuted by the environment in a
         trial-and-error loop): the decoding constraint makes them impossible to pick, not just discouraged.
         `full=True` scores every option (the log-probability of its tokens, normalised over the options) instead of
         decoding the best one greedily: `probabilities` then covers all the options. It costs one forward pass per
-        distinct token prefix of the options, so use it with a few dozen options or when the distribution matters."""
+        distinct token prefix of the options, so use it with a few dozen options or when the distribution matters.
+
+        `order` is the order of the prompt blocks (see `segments`); `KV.decide` uses "shared-state" for many
+        questions about one state."""
         excluded = set(exclude)
         allowed = [k_ for k_ in self.keys if k_ not in excluded] if excluded else self.keys
         if not allowed:
             raise ValueError("every option is excluded")
         usage = usage if usage is not None else Usage()
         if full and not self.labels:
-            return self._choose_scored(state, instructions, usage, allowed)
+            return self._choose_scored(state, instructions, usage, allowed, order)
         if self.labels:
-            return self._choose_labels(state, instructions, usage, allowed)
-        return self._choose_name(state, instructions, usage, allowed)
+            return self._choose_labels(state, instructions, usage, allowed, order)
+        return self._choose_name(state, instructions, usage, allowed, order)
 
     def scores(self, state: Any, instructions: str | None = None, allowed: Iterable[str] | None = None,
-               usage: Usage | None = None) -> dict[str, float]:
+               usage: Usage | None = None, order: str = "options-first") -> dict[str, float]:
         """log P of every option for `state` (normalised over `allowed`, all options when None)."""
         allowed = list(allowed) if allowed is not None else self.keys
-        lps, st = self.kv.client.score_options(self.segments(state, instructions), self.keys, allowed=allowed)
+        lps, st = self.kv.client.score_options(
+            self.segments(state, instructions, order),
+            self.keys,
+            allowed=allowed
+        )
         self._account(st, usage if usage is not None else Usage())
         return lps
 
-    def _choose_scored(self, state, instructions, usage, allowed) -> ChoiceAnswer:
-        lps = self.scores(state, instructions, allowed, usage)
+    def _choose_scored(self, state, instructions, usage, allowed, order="options-first") -> ChoiceAnswer:
+        lps = self.scores(state, instructions, allowed, usage, order)
         probs = softmax(lps)
         full = {k_: round(probs.get(k_, 0.0), 6) for k_ in self.keys}
         best = max(probs, key=probs.get)
@@ -211,10 +224,14 @@ class Index:
         usage.cached_tokens += st.get("cached_tokens", 0)
         usage.output_tokens += st.get("output_tokens", 0)
 
-    def _choose_labels(self, state, instructions, usage, allowed) -> ChoiceAnswer:
+    def _choose_labels(self, state, instructions, usage, allowed, order="options-first") -> ChoiceAnswer:
         by_key = dict(zip(self.keys, self.labels))
         labels = [by_key[k_] for k_ in allowed]
-        lps, st = self.kv.client.label_logprobs(self.segments(state, instructions), labels, self.num_ctx)
+        lps, st = self.kv.client.label_logprobs(
+            self.segments(state, instructions, order),
+            labels,
+            self.num_ctx
+        )
         self._account(st, usage)
         lp = {self.keys[self.labels.index(lab)]: v for lab, v in lps.items() if lab in labels}
         probs = softmax(lp)
@@ -222,9 +239,14 @@ class Index:
         best = max(probs, key=probs.get)
         return ChoiceAnswer(choice=best, probabilities=full, confidence=round(confidence(list(full.values())), 4))
 
-    def _choose_name(self, state, instructions, usage, allowed) -> ChoiceAnswer:
-        text, lp, st = self.kv.client.pick_option(self.segments(state, instructions), self.keys, self.num_ctx,
-                                                  self.enum_max, allowed=None if allowed is self.keys else allowed)
+    def _choose_name(self, state, instructions, usage, allowed, order="options-first") -> ChoiceAnswer:
+        text, lp, st = self.kv.client.pick_option(
+            self.segments(state, instructions, order),
+            self.keys,
+            self.num_ctx,
+            self.enum_max,
+            allowed=None if allowed is self.keys else allowed
+        )
         self._account(st, usage)
         best = self._match(text or "", allowed)
         p = round(math.exp(lp), 6) if lp is not None else None
@@ -398,34 +420,145 @@ class KV:
         return idx.choose(state, instructions)
 
     def decide(self, state: Any, questions: dict[str, Any] | Any = None, temperature: float = 1.0,
-               labels: bool = False, full: bool = False) -> Response:
+               labels: bool = False, full: bool = False, head: Any = None, order: str = "auto") -> Response:
         """OpenJev / Jev-style: several typed questions about one state.
 
         `questions` maps ids to `Choice`, `Score` or `Noul` (these classes, OpenJev's, or plain dicts with a
         "type" field). An OpenJev `SystemOneRequest` can be passed as the only argument.
         `full=True` gives `Choice` answers the probability of every option (see `Index.choose`); `Score` and `Noul`
         answers always carry the probability of every level.
-        """
+        `head` (from `KV.train_questions`, or the path of its .npz file) answers every question with the trained
+        catalogue alone: one embedding call per state, no LLM call.
+        `order`: "options" keeps every option list first in the prompt (cached across states); "state" puts the
+        state first, shared by all the questions of the call; "auto" (default) puts the state first for the
+        questions with a short option list (at most 2,000 characters, or shorter than the state), when there
+        are at least two of them, and keeps long lists first (cached across states)."""
         if questions is None and hasattr(state, "questions"):
             state, questions = state.state, state.questions
+        if head is not None:
+            if isinstance(head, str):
+                from .train import Head
+                head = Head.load(head)
+            return self._decide_catalog(state, questions, head)
         t0 = time.perf_counter()
         usage, answers = Usage(), {}
-        for qid, q in questions.items():
-            q, idx, instructions = self.question_index(q, labels=labels)
-            a = idx.choose(state, instructions, usage, full=full and q.type == "choice")
+        items = [(qid,) + tuple(self.question_index(q, labels=labels)) for qid, q in questions.items()]
+        if order not in ("auto", "options", "state"):
+            raise ValueError(f"unknown order {order!r}")
+        if order == "state":
+            shared = {qid for qid, _, _, _ in items}
+        elif order == "auto":
+            short = {qid for qid, _, idx, _ in items if len(idx._options) <= 2000
+                     or len(idx.prefix) < len(idx.state_block(state))}
+            shared = short if len(short) >= 2 else set()
+        else:
+            shared = set()
+        held = None
+        if shared:
+            first = next(idx for qid, _, idx, _ in items if qid in shared)
+            held = first.segments(state, None, "shared-state")[0]
+            self.client.hold(held)
+        try:
+            for qid, q, idx, instructions in items:
+                a = idx.choose(
+                    state,
+                    instructions,
+                    usage,
+                    full=full and q.type == "choice",
+                    order="shared-state" if qid in shared else "options-first"
+                )
+                if q.type == "choice":
+                    if temperature != 1.0 and a.probabilities:
+                        a = _retemper(a, temperature)
+                    answers[qid] = a
+                elif q.type == "score":
+                    levels = idx.keys
+                    probs = {lv: a.probabilities.get(lv, 0.0) for lv in levels}
+                    answers[qid] = ScoreAnswer(
+                        score=round(sum(int(k_) * p for k_, p in probs.items()), 4),
+                        probabilities=probs,
+                        confidence=a.confidence,
+                        legend=dict(zip(levels, q.criteria))
+                    )
+                else:
+                    answers[qid] = NoulAnswer(noul=round(a.probabilities.get("Yes", 0.0), 6))
+        finally:
+            if held is not None:
+                self.client.release(held)
+        return Response(
+            model=f"kvindex/{self.model}",
+            answers=answers,
+            usage=usage,
+            latency_ms=round((time.perf_counter() - t0) * 1000, 2)
+        )
+
+    def train_questions(self, examples: Any, out: str | None = None, **fit_kw) -> Any:
+        """Train the embedding catalogue on typed questions. `examples`: (state, question, answer) triples; the
+        question is a `Choice`, `Score` or `Noul` and the answer is anything `answer_target` accepts, soft
+        distributions included (for instance the answers of `KV.teach`). Returns a head for
+        `KV.decide(..., head=head)`; `out` saves it to a .npz file."""
+        from .catalog import QUERY_TEMPLATE
+        from .train import fit_head_grouped
+        template = self.query_template or QUERY_TEMPLATE
+        texts, row, states, candidates, targets = [], {}, [], [], []
+        for state, q, answer in examples:
+            keys, opt_texts, instructions = question_options(q)
+            for t in opt_texts:
+                if t not in row:
+                    row[t] = len(texts)
+                    texts.append(t)
+            candidates.append([row[t] for t in opt_texts])
+            targets.append(answer_target(q, keys, answer))
+            states.append(template.format(question=instructions or "", state=render_state(state)))
+        head = fit_head_grouped(self.encoder(states), self.encoder(texts), candidates, targets, **fit_kw)
+        if out:
+            head.save(out)
+        return head
+
+    def teach(self, cases: Any) -> list:
+        """(state, question, answer) examples labelled by the LLM: for each (state, questions) pair, `decide` with
+        the probability of every option. Use them with `train_questions` to train the catalogue without labels."""
+        examples = []
+        for state, questions in cases:
+            r = self.decide(state, questions, full=True)
+            for qid, q in questions.items():
+                examples.append((state, q, r.answers[qid]))
+        return examples
+
+    def _decide_catalog(self, state: Any, questions: dict[str, Any], head: Any) -> Response:
+        """Answer every question with the trained catalogue alone (no LLM call)."""
+        import numpy as np
+
+        from .catalog import QUERY_TEMPLATE
+        t0 = time.perf_counter()
+        template = self.query_template or QUERY_TEMPLATE
+        scale = float(head.report.get("scale", 30.0))
+        items = [(qid, _coerce(q)) for qid, q in questions.items()]
+        opts = [question_options(q) for _, q in items]
+        queries = [template.format(question=ins or "", state=render_state(state)) for _, _, ins in opts]
+        zs = head.state(self.encoder(queries))
+        cache = self.__dict__.setdefault("_option_vectors", {})
+        missing = sorted({t for _, texts, _ in opts for t in texts if t not in cache})
+        if missing:
+            for t, v in zip(missing, self.encoder(missing)):
+                cache[t] = v
+        answers = {}
+        for (qid, q), (keys, texts, _), z in zip(items, opts, zs):
+            zo = head.options(np.stack([cache[t] for t in texts]))
+            lp = {k: scale * float(s) for k, s in zip(keys, zo @ z)}
+            probs = softmax(lp)
+            conf = round(confidence(list(probs.values())), 4)
             if q.type == "choice":
-                if temperature != 1.0 and a.probabilities:
-                    a = _retemper(a, temperature)
-                answers[qid] = a
+                best = max(probs, key=probs.get)
+                answers[qid] = ChoiceAnswer(choice=best, probabilities={k: round(p, 6) for k, p in probs.items()},
+                                            confidence=conf)
             elif q.type == "score":
-                levels = idx.keys
-                probs = {lv: a.probabilities.get(lv, 0.0) for lv in levels}
-                answers[qid] = ScoreAnswer(score=round(sum(int(k_) * p for k_, p in probs.items()), 4),
-                                           probabilities=probs, confidence=a.confidence,
-                                           legend=dict(zip(levels, q.criteria)))
+                answers[qid] = ScoreAnswer(score=round(sum(int(k) * p for k, p in probs.items()), 4),
+                                           probabilities={k: round(p, 6) for k, p in probs.items()}, confidence=conf,
+                                           legend=dict(zip(keys, q.criteria)))
             else:
-                answers[qid] = NoulAnswer(noul=round(a.probabilities.get("Yes", 0.0), 6))
-        return Response(model=f"kvindex/{self.model}", answers=answers, usage=usage,
+                answers[qid] = NoulAnswer(noul=round(probs["Yes"], 6))
+        return Response(model=f"kvindex/{self.model}/catalogue", answers=answers, usage=Usage(),
                         latency_ms=round((time.perf_counter() - t0) * 1000, 2))
 
     def question_index(self, q: Any, labels: bool = False, warm: bool = True) -> tuple[Any, Index, str]:
@@ -449,6 +582,91 @@ class KV:
                              labels=["Yes", "No"], noun="answer", warm=warm)
             return q, idx, q.instructions
         raise ValueError(f"unknown question type {q.type!r}")
+
+
+def question_options(q: Any) -> tuple[list[str], list[str], str]:
+    """Option keys, option texts for the embedding catalogue, and instructions of one typed question."""
+    q = _coerce(q)
+    if q.type == "choice":
+        opts = q.options if q.options is not None else q.criteria
+        if hasattr(opts, 'keys') and isinstance(opts.keys, list) and hasattr(opts, 'texts'):
+            keys = opts.keys
+            texts = opts.texts
+        else:
+            keys, _, texts = parse_options(opts)
+        return keys, texts, q.instructions
+    elif q.type == "score":
+        keys = [str(i) for i in range(len(q.criteria))]
+        texts = [str(c) for c in q.criteria]
+        return keys, texts, q.instructions
+    elif q.type == "noul":
+        crit = q.criteria or {}
+        texts = ["Yes: " + (crit.get("true") or "the answer to the question is yes / true"),
+                 "No: " + (crit.get("false") or "the answer to the question is no / false")]
+        return ["Yes", "No"], texts, q.instructions
+    else:
+        raise ValueError(f"unknown question type {q.type!r}")
+
+
+def answer_target(q: Any, keys: list[str], answer: Any) -> list[float]:
+    """Target distribution over `keys` for one answer: an option name, a level, a bool or a probability, a
+    {key: probability} dict, or an answer object returned by `KV.decide`."""
+    q = _coerce(q)
+    if isinstance(answer, ChoiceAnswer):
+        if len(answer.probabilities) > 1:
+            probs = answer.probabilities
+        else:
+            probs = {answer.choice: 1.0}
+    elif isinstance(answer, ScoreAnswer):
+        probs = {str(k): v for k, v in answer.probabilities.items()}
+    elif isinstance(answer, NoulAnswer):
+        probs = {"Yes": answer.noul, "No": 1 - answer.noul}
+    elif isinstance(answer, dict):
+        if q.type == "noul":
+            probs = {}
+            for k, v in answer.items():
+                k_stripped_lower = k.strip().lower()
+                if k_stripped_lower in ("true", "yes"):
+                    probs["Yes"] = v
+                elif k_stripped_lower in ("false", "no"):
+                    probs["No"] = v
+                else:
+                    probs[k] = v
+        elif q.type == "score":
+            probs = {str(k): v for k, v in answer.items()}
+        else:
+            probs = answer.copy()
+    elif isinstance(answer, bool):
+        if q.type != "noul":
+            raise ValueError("bool answers are only valid for noul questions")
+        probs = {"Yes": 1.0, "No": 0.0} if answer else {"Yes": 0.0, "No": 1.0}
+    elif isinstance(answer, (int, float)):
+        if q.type == "noul":
+            f = float(answer)
+            probs = {"Yes": f, "No": 1 - f}
+        elif q.type == "score":
+            k = str(int(round(answer)))
+            probs = {k: 1.0}
+        else:
+            raise ValueError("numeric answers are only valid for noul or score questions")
+    elif isinstance(answer, str):
+        if q.type == "noul":
+            answer_stripped_lower = answer.strip().lower()
+            if answer_stripped_lower in ("true", "yes"):
+                probs = {"Yes": 1.0, "No": 0.0}
+            elif answer_stripped_lower in ("false", "no"):
+                probs = {"Yes": 0.0, "No": 1.0}
+            else:
+                probs = {answer: 1.0}
+        else:
+            probs = {answer: 1.0}
+    else:
+        raise ValueError(f"unknown answer type {type(answer)}")
+
+    total = sum(probs.get(k, 0.0) for k in keys)
+    if total == 0.0:
+        raise ValueError(f"answer {answer!r} gives no probability to any option")
+    return [float(probs.get(k, 0.0)) / total for k in keys]
 
 
 def _coerce(q: Any):

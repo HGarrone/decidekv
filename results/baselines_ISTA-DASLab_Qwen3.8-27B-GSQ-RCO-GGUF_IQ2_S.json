@@ -46,5 +46,15 @@
       "noul": 0.735,
       "score": 0.64125
     }
+  },
+  "typed/all/kvindex-state": {
+    "acc": 0.7045,
+    "ms": 187.74470000007568,
+    "decisions": 2000,
+    "by_type": {
+      "choice": 0.695,
+      "noul": 0.7566666666666667,
+      "score": 0.6725
+    }
   }
 }

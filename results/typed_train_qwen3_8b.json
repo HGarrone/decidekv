@@ -1,0 +1,99 @@
+{
+  "typed/catalogue": {
+    "acc": 0.4455,
+    "ms": 57.38074999990204,
+    "ms_per_case": 286.9037499995102,
+    "decisions": 2000,
+    "by_type": {
+      "choice": 0.345,
+      "noul": 0.565,
+      "score": 0.43125
+    }
+  },
+  "typed/trained-hard": {
+    "acc": 0.7545,
+    "ms": 57.44847999994818,
+    "ms_per_case": 287.2423999997409,
+    "decisions": 2000,
+    "by_type": {
+      "choice": 0.7083333333333334,
+      "noul": 0.8033333333333333,
+      "score": 0.7525
+    },
+    "train": {
+      "val_start": 0.43166666666666664,
+      "val_best": 0.8033333333333333,
+      "best_epoch": 21,
+      "train_s": 138.42159840000022,
+      "train_examples": 5400,
+      "val_examples": 600,
+      "scale": 30.0,
+      "total_s": 609.0656331
+    }
+  },
+  "typed/trained-soft": {
+    "acc": 0.7565,
+    "ms": 57.48372999996718,
+    "ms_per_case": 287.4186499998359,
+    "decisions": 2000,
+    "by_type": {
+      "choice": 0.72,
+      "noul": 0.8083333333333333,
+      "score": 0.745
+    },
+    "train": {
+      "val_start": 0.43166666666666664,
+      "val_best": 0.8266666666666667,
+      "best_epoch": 39,
+      "train_s": 138.55649899999935,
+      "train_examples": 5400,
+      "val_examples": 600,
+      "scale": 30.0,
+      "total_s": 607.9968036
+    }
+  },
+  "typed/trained-teacher-qwen3_8b": {
+    "acc": 0.504,
+    "ms": 57.48307999992903,
+    "ms_per_case": 287.41539999964516,
+    "decisions": 2000,
+    "by_type": {
+      "choice": 0.46,
+      "noul": 0.635,
+      "score": 0.43875
+    },
+    "train": {
+      "val_start": 0.385,
+      "val_best": 0.8933333333333333,
+      "best_epoch": 28,
+      "train_s": 138.0225792000001,
+      "train_examples": 5400,
+      "val_examples": 600,
+      "scale": 30.0,
+      "total_s": 607.7682453999996,
+      "teacher_s": 359.7958604999876
+    }
+  },
+  "typed/trained-teacher-ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S": {
+    "acc": 0.666,
+    "ms": 57.453609999993205,
+    "ms_per_case": 287.268049999966,
+    "decisions": 2000,
+    "by_type": {
+      "choice": 0.6616666666666666,
+      "noul": 0.7266666666666667,
+      "score": 0.62375
+    },
+    "train": {
+      "val_start": 0.44333333333333336,
+      "val_best": 0.8766666666666667,
+      "best_epoch": 11,
+      "train_s": 138.72408520000045,
+      "train_examples": 5400,
+      "val_examples": 600,
+      "scale": 30.0,
+      "total_s": 608.5420189999995,
+      "teacher_s": 2531.272651
+    }
+  }
+}

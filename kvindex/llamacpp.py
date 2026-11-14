@@ -547,6 +547,24 @@ class LlamaCpp:
             self._tries[key] = t
         return t
 
+    def hold(self, prefix: str) -> None:
+        """Declare `prefix` a resident prefix without evaluating anything: the next prompt that starts with it
+        evaluates it once, and the following ones copy it (for instance one state shared by several questions)."""
+        key = prefix
+        self._registered.pop(key, None)
+        self._registered[key] = None
+        while len(self._registered) > 64:
+            self._registered.pop(next(iter(self._registered)))
+
+    def release(self, prefix: str) -> None:
+        """Forget a resident prefix declared with `hold` and free its cache cells."""
+        self._registered.pop(prefix, None)
+        toks, n = self._split([prefix, ""])
+        head = toks[:n]
+        for seq in [s for s, t in self.bases.items() if t == head]:
+            self.seq_rm(seq, -1, -1)
+            del self.bases[seq]
+
 
 # ---------------------------------------------------------------- embedding encoder
 class LlamaCppEncoder:

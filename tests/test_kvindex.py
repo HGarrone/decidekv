@@ -18,13 +18,19 @@ class FakeClient:
 
     def __init__(self):
         self.host, self.prompts = "http://fake", []
+        self.firsts = []
+        self.calls = []
 
     def architecture(self):
         return "llama"
 
     @staticmethod
     def _parse(segments):
-        prefix, state_seg, _ = segments
+        first, second, _ = segments
+        if first.startswith("You are a decision engine. Questions about"):
+            prefix, state_seg = second, first.split("\n\n", 1)[1]
+        else:
+            prefix, state_seg = first, second
         state = state_seg.split("\n", 1)[1].lower()                  # "### <state label>\n<state>"
         body = prefix.split("\n\n### ", 1)[1]                         # "<Nouns>\n<option lines>"
         opts = body.split("\n", 1)[1].strip().splitlines()
@@ -35,6 +41,7 @@ class FakeClient:
         return {"input_tokens": 50, "cached_tokens": 0, "output_tokens": 1}
 
     def label_logprobs(self, segments, labels, num_ctx=None):
+        self.firsts.append(segments[0])
         self.prompts.append("".join(segments))
         state, opts = self._parse(segments)
         texts = [o.split(": ")[-1].lower() for o in opts]          # description part of "L: key: desc"
@@ -43,6 +50,7 @@ class FakeClient:
         return lp, {"input_tokens": 10, "cached_tokens": 40, "output_tokens": 1}
 
     def pick_option(self, segments, options, num_ctx=None, enum_max=None, allowed=None):
+        self.firsts.append(segments[0])
         self.prompts.append("".join(segments))
         state, lines = self._parse(segments)
         desc = {ln[2:].split(": ", 1)[0]: ln[2:].split(": ", 1)[-1].lower() for ln in lines}
@@ -51,6 +59,7 @@ class FakeClient:
         return best, math.log(0.8), {"input_tokens": 10, "cached_tokens": 90, "output_tokens": 3}
 
     def score_options(self, segments, options, allowed=None):
+        self.firsts.append(segments[0])
         self.prompts.append("".join(segments))
         state, lines = self._parse(segments)
         desc = {ln[2:].split(": ", 1)[0]: ln[2:].split(": ", 1)[-1].lower() for ln in lines}
@@ -60,6 +69,12 @@ class FakeClient:
             return ({pool[0]: math.log(1.0)}, {"input_tokens": 10, "cached_tokens": 90, "output_tokens": 1})
         return ({o: math.log(0.7) if o == best else math.log(0.3 / (len(pool) - 1)) for o in pool},
                 {"input_tokens": 10, "cached_tokens": 90, "output_tokens": len(pool)})
+
+    def hold(self, prefix):
+        self.calls.append(("hold", prefix))
+
+    def release(self, prefix):
+        self.calls.append(("release", prefix))
 
 
 WORDS = ["zebra", "milk", "piano", "hammer", "window", "garden", "rocket", "butter"]
@@ -319,3 +334,99 @@ def test_scores_respect_exclusions():
     assert abs(sum(math.exp(v) for v in s.values()) - 1) < 1e-6
     a = idx.choose("where is my card arrival status", exclude=["card arrival"], full=True)
     assert a.choice != "card arrival" and a.probabilities["card arrival"] == 0.0
+
+
+def typed_examples():
+    """States made of the letters w, x, y, z; the right answers use other letters, so the untrained catalogue
+    cannot find them by similarity."""
+    choice = Choice(instructions="Which item?", options=["aaaa", "bbbb", "cccc", "dddd"])
+    score = Score(instructions="How much?", criteria=["eeee", "ffff", "gggg"])
+    noul = Noul(instructions="Is it so?", criteria={"true": "hhhh", "false": "iiii"})
+    examples = []
+    for i in range(240):
+        s = "wxyz"[i % 4] * (3 + i % 3) + "mnop"[(i // 4) % 4]
+        examples.append((s, choice, ["aaaa", "bbbb", "cccc", "dddd"][i % 4]))
+        examples.append((s, score, {"0": 0.8, "1": 0.2} if i % 4 < 2 else {"2": 0.9, "1": 0.1}))
+        examples.append((s, noul, i % 4 in (0, 3)))
+    return choice, score, noul, examples
+
+
+def test_train_questions_learns_choice_score_and_noul():
+    choice, score, noul, examples = typed_examples()
+    kv = make_kv(embed=FakeEncoder())
+    head = kv.train_questions(examples, epochs=60, batch=32, lr=0.01)
+    assert head.report["val_best"] > head.report["val_start"]
+    r = kv.decide("wwww", {"c": choice, "s": score, "n": noul}, head=head)
+    assert r.answers["c"].choice == "aaaa"
+    assert r.answers["s"].score < 1.0
+    assert r.answers["n"].noul > 0.5
+    r2 = kv.decide("yyyy", {"c": choice, "s": score, "n": noul}, head=head)
+    assert r2.answers["c"].choice == "cccc"
+    assert r2.answers["s"].score > 1.0
+    assert r2.answers["n"].noul < 0.5
+    assert kv.client.prompts == []
+
+
+def test_head_file_and_soft_answers(tmp_path):
+    choice, score, noul, examples = typed_examples()
+    kv = make_kv(embed=FakeEncoder())
+    path = str(tmp_path / "typed.npz")
+    kv.train_questions(examples, out=path, epochs=60, batch=32, lr=0.01)
+    r = kv.decide("xxxx", {"c": choice}, head=path)
+    assert r.answers["c"].choice == "bbbb"
+    assert abs(sum(r.answers["c"].probabilities.values()) - 1) < 1e-4
+
+
+def test_answer_targets():
+    from kvindex.core import answer_target
+    noul = Noul(instructions="q")
+    score = Score(instructions="q", criteria=["a", "b", "c"])
+    assert answer_target(noul, ["Yes", "No"], True) == [1.0, 0.0]
+    assert answer_target(noul, ["Yes", "No"], 0.25) == [0.25, 0.75]
+    assert answer_target(noul, ["Yes", "No"], {"true": 3, "false": 1}) == [0.75, 0.25]
+    assert answer_target(score, ["0", "1", "2"], 2) == [0.0, 0.0, 1.0]
+    assert answer_target(score, ["0", "1", "2"], {0: 1, 2: 1}) == [0.5, 0.0, 0.5]
+    with pytest.raises(ValueError):
+        answer_target(score, ["0", "1", "2"], {"7": 1.0})
+
+
+def test_decide_state_order_shares_the_state():
+    kv = make_kv()
+    qs = {"n1": Noul(instructions="Is the light red?"), "n2": Noul(instructions="Is it raining?"),
+          "s": Score(instructions="How loud is it?", criteria=["quiet", "loud"])}
+    state = "A long street at night. " * 20
+    r_opt = kv.decide(state, qs, order="options")
+    assert kv.client.calls == []
+    n = len(kv.client.firsts)
+    r_st = kv.decide(state, qs, order="state")
+    firsts = kv.client.firsts[n:]
+    assert len(firsts) == 3
+    assert len(set(firsts)) == 1
+    assert firsts[0].startswith("You are a decision engine. Questions about")
+    assert kv.client.calls == [("hold", firsts[0]), ("release", firsts[0])]
+    for qid in qs:
+        assert r_opt.answers[qid] == r_st.answers[qid]
+
+
+def test_decide_auto_order():
+    kv = make_kv()
+    two = {"a": Noul(instructions="Is the light red?"), "b": Noul(instructions="Is it raining?")}
+    kv.decide("A long street at night. " * 20, two)
+    assert [c[0] for c in kv.client.calls] == ["hold", "release"]
+    kv.client.calls.clear()
+    kv.decide("A long street at night. " * 20, {"a": two["a"]})
+    assert kv.client.calls == []
+    kv.decide("Night.", two)
+    assert [c[0] for c in kv.client.calls] == ["hold", "release"]
+    kv.client.calls.clear()
+    words = [f"word{i:04d}" for i in range(400)]
+    big = {"a": Choice(instructions="Which word?", options=words), "b": Choice(instructions="Which other word?",
+                                                                               options=words)}
+    kv.decide("Night.", big)
+    assert kv.client.calls == []
+
+
+def test_decide_unknown_order():
+    kv = make_kv()
+    with pytest.raises(ValueError):
+        kv.decide("x", {"a": Noul(instructions="q")}, order="sideways")

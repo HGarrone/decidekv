@@ -121,3 +121,12 @@ class Ollama:
     def embed(self, texts: list[str]) -> list[list[float]]:
         return self._post("/api/embed", {"model": self.model, "input": texts, "keep_alive": self.keep_alive,
                                          "options": {"num_ctx": 512}})["embeddings"]
+
+    def hold(self, prefix: str) -> None:
+        """Declare `prefix` a resident prefix without evaluating anything: the next prompt that starts with it
+        evaluates it once, and the following ones copy it (for instance one state shared by several questions).
+        The Ollama server keeps its own prefix cache: nothing to do."""
+
+    def release(self, prefix: str) -> None:
+        """Forget a resident prefix declared with `hold` and free its cache cells.
+        The Ollama server keeps its own prefix cache: nothing to do."""

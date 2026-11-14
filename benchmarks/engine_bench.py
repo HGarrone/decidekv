@@ -14,7 +14,7 @@ import time
 import warnings
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from data import banking77, correct, load_json, save_json  # noqa: E402
+from data import banking77, correct, load_json, save_json, to_text, typed_decisions  # noqa: E402
 from kvindex import KV, Noul, Score  # noqa: E402
 
 PROMPT = dict(noun="intent", state_label="Customer message",
@@ -45,19 +45,21 @@ def banking(kv, options, queries, recompute):
     return {"acc": ok / len(queries), "ms": statistics.median(ms), "queries": len(queries)}
 
 
-def turn(kv, repeats=3):
-    """Median ms of a turn of 15 typed questions (4 Score, 11 Noul) about one state, and its token counts."""
+def turn(kv, state, order, repeats=4):
+    """Median ms of a turn of 15 typed questions (4 Score, 11 Noul) about one state,
+    in one prompt order, and its token counts. The first turn (which fills the cache
+    with the option lists) is not counted."""
     qs = {f"s{i}": Score(instructions=f"How strong is quality {i} of the scene?",
                          criteria=["none", "weak", "medium", "strong"]) for i in range(4)}
     qs.update({f"n{i}": Noul(instructions=f"Is condition number {i} true in this scene?") for i in range(11)})
     ms = []
     for _ in range(repeats):
         t0 = time.perf_counter()
-        r = kv.decide(STATE, qs)
+        r = kv.decide(state, qs, order=order)
         t1 = time.perf_counter()
         ms.append((t1 - t0) * 1000)
-    return {"ms": statistics.median(ms), "questions": 15, "computed_tokens": r.usage.input_tokens,
-            "reused_tokens": r.usage.cached_tokens}
+    return {"ms": statistics.median(ms[1:]), "questions": 15, "computed_tokens": r.usage.input_tokens,
+            "reused_tokens": r.usage.cached_tokens, "state_chars": len(str(state)), "order": order}
 
 
 def main():
@@ -72,6 +74,7 @@ def main():
 
     res = load_json(a.out)
     options, queries = banking77(a.queries)
+    long_state = " ".join(to_text(c["state"]) for c in typed_decisions("test")[:9])
 
     for model in a.models.split(","):
         kv = KV(model, n_ctx=a.n_ctx, kv_type=a.kv_type)
@@ -80,9 +83,12 @@ def main():
             res[f"{key}/info"] = {"architecture": kv.client.architecture(), "tail_removal": kv.client.can_cut}
             res[f"{key}/banking77/resident"] = banking(kv, options, queries, False)
             res[f"{key}/banking77/recompute"] = banking(kv, options, queries, True)
-            res[f"{key}/turn15"] = turn(kv)
+            for sname, state in (("short", STATE), ("long", long_state)):
+                for order in ("options", "auto"):
+                    res[f"{key}/turn15/{sname}/{order}"] = turn(kv, state, order)
+            res[f"{key}/turn15"] = res[f"{key}/turn15/short/auto"]
             save_json(a.out, res)
-            for k in [f"{key}/info", f"{key}/banking77/resident", f"{key}/banking77/recompute", f"{key}/turn15"]:
+            for k in [k for k in res if k.startswith(key + "/")]:
                 print(f"{k}: {res[k]}", flush=True)
         finally:
             kv.close()

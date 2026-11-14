@@ -10,8 +10,9 @@ at every list size.
   only the tokens of the new state, and the answer is decoded so that it can only be one of the options.
 - **Above 3,000 options** an embedding catalogue selects the 50 options closest to the state and the LLM chooses
   among them.
-- **Optionally**, the catalogue can be trained on examples of your own task in about a minute. Only a small
-  projection of the embedding vectors is trained; the LLM is never trained.
+- **Optionally**, the catalogue can be trained on examples of your own task in minutes, also on typed questions
+  and also without labels (the LLM labels your states). Only a small projection of the embedding vectors is
+  trained; the LLM is never trained. Trained on Typed Decisions, the catalogue alone reaches 75.6% with no LLM call.
 
 It speaks the `Choice` / `Score` / `Noul` question types of [OpenJev](https://github.com/GPT-AGI/OpenJev), runs on
 any GGUF model that [Ollama](https://ollama.com) has downloaded (pure-attention and hybrid recurrent models alike),
@@ -100,6 +101,10 @@ r = kv.decide(
 r.answers["intent"].choice, r.answers["mood"].score, r.answers["escalate"].noul
 ```
 
+When several questions with short option lists are asked about a long state, `decide` puts the state first in the
+prompt and keeps it in the cache for all of them, so the state is computed once per turn instead of once per
+question (`order="auto"`, the default; `order="options"` or `"state"` force one order).
+
 ### Trial and error
 
 `exclude=` removes options from the decoding, so an attempt that was already refuted cannot be chosen again:
@@ -132,6 +137,29 @@ intents.choose("where is my card?").choice
 With a trained head the catalogue decides alone (no LLM call) unless you pass `k` greater than 1. A head belongs
 to the embedding model and to the list of options it was trained with. It lowers the accuracy on options that had
 no training example (see the results), so train with examples for every option you care about.
+
+### Training on typed questions, with or without labels
+
+The catalogue can also learn `Choice`, `Score` and `Noul` questions, each with its own options. An answer can be an
+option name, a level, `True`/`False`, a probability, or a distribution `{key: probability}` (soft labels).
+
+```python
+# (state, question, answer): e.g. (ticket, Noul(...), True) or (ticket, Score(...), {"0": 0.2, "1": 0.8})
+examples = [...]
+head = kv.train_questions(examples, out="typed_head.npz")
+r = kv.decide(state, questions, head=head)            # the trained catalogue answers alone: no LLM call
+```
+
+Without labels, the LLM labels your states and the catalogue learns its answers (the probability of every option,
+not only the best one):
+
+```python
+examples = kv.teach([(state, questions) for state in my_states])
+head = kv.train_questions(examples)
+```
+
+The catalogue then answers in the time of the embedding calls instead of an LLM call per question, with about the
+accuracy of its teacher (see the results).
 
 ### Any embedding model
 
@@ -209,8 +237,8 @@ generated from the files in `results/` by `python benchmarks/report.py`.
 <!-- table:comparison -->
 | Method | Training | Banking77 (77 intents) | WordNet (200 words) | Typed Decisions | Aim game (games won, time per shot) |
 |---|---|---|---|---|---|
-| **kvindex** | none | 60.7% · 65 ms | 70.7% · 38 ms | 51.1% · 62 ms | 95.0% · 159 ms |
-| **kvindex, trained catalogue** | on the task | 93.0% · 15 ms | – | – | – |
+| **kvindex** | none | 60.7% · 65 ms | 70.7% · 38 ms | 56.9% · 48 ms | 95.0% · 159 ms |
+| **kvindex, trained catalogue** | on the task | 93.0% · 15 ms | – | 75.6% · 57 ms | – |
 | OpenJev architecture, shared prompt | none | 39.7% · 90 ms | 63.3% · 132 ms | 59.3% · 67 ms | 25.0% · 423 ms |
 | OpenJev library, own prompt, Ollama | none | 44.0% · 117 ms | 22.7% · 164 ms | 58.1% · 62 ms | 25.0% · 469 ms |
 | CLM-8B as released | none | 4.3% · 35 ms | 12.7% · 21 ms | 36.8% · 79 ms | 15.0% · 124 ms |
@@ -228,6 +256,7 @@ generated from the files in `results/` by `python benchmarks/report.py`.
   this project on the same machine and model weights, made with scripts that are not part of the repository.
   CLM-8B is Qwen3-8B plus the released CLM-v0.1-8B heads.
 - Banking77: 300 test messages. WordNet: 150 definitions, 200 candidate words. Typed Decisions: 2,000 decisions.
+  kvindex answers the five questions of a Typed Decisions case in one `decide` call (state first, the default).
   Aim game: 20 games on a 15×15 grid, at most 25 shots.
 
 ### The same comparison on a hybrid 27B model
@@ -239,7 +268,7 @@ aim game, so that the 9.3 GB of weights and the cache fit in 12 GB:
 <!-- table:hybrid27b -->
 | Method | Banking77 (77 intents) | WordNet (200 words) | Typed Decisions | Aim game (games won, time per shot) |
 |---|---|---|---|---|
-| **kvindex** | 73.0% · 161 ms | 82.7% · 106 ms | 69.6% · 249 ms | 100.0% · 340 ms |
+| **kvindex** | 73.0% · 161 ms | 82.7% · 106 ms | 70.5% · 188 ms | 100.0% · 340 ms |
 | OpenJev architecture, shared prompt | 45.7% · 409 ms | 84.0% · 600 ms | 69.1% · 307 ms | not measured: over two hours (the whole grid is recomputed at every shot) |
 <!-- /table:hybrid27b -->
 
@@ -298,16 +327,74 @@ A catalogue trained with the examples of half of the intents only:
 | Had no training example (38 intents) | 65.3% | 21.1% |
 <!-- /table:heldout -->
 
+### Training the catalogue on typed questions
+
+Typed Decisions: the catalogue is trained with `kv.train_questions` on the training split (1,200 cases, 6,000
+decisions of type `Choice`, `Score` and `Noul`) and answers the test split alone, with no LLM call. The teacher rows
+use no human label at all: `kv.teach` lets the LLM answer the training cases (the probability of every option, with
+the options-first prompt of the previous version) and the catalogue learns those answers.
+
+<!-- table:typedtrain -->
+| Typed Decisions, 2,000 test decisions | Labels used for training | Accuracy · time per decision |
+|---|---|---|
+| Catalogue alone, untrained | none | 44.5% · 57 ms |
+| Catalogue alone, trained on the official answers | 6,000 human labels (most probable answer) | 75.4% · 57 ms |
+| **Catalogue alone, trained on the official distributions** | 6,000 human labels (soft) | 75.6% · 57 ms |
+| Catalogue alone, trained on the answers of Qwen3-8B (`kv.teach`) | none (the 8B labels the training states in 6 min) | 50.4% · 57 ms |
+| Catalogue alone, trained on the answers of Qwen3.8-27B (`kv.teach`) | none (the 27B labels the training states in 42 min) | 66.6% · 57 ms |
+| *kvindex with Qwen3-8B, no catalogue* | none | 56.9% · 48 ms |
+| *kvindex with Qwen3.8-27B, no catalogue* | none | 70.5% · 188 ms |
+| *CLM-8B, heads fine-tuned* | 6,000 human labels | 71.0% · 79 ms |
+<!-- /table:typedtrain -->
+
+- Trained on the human labels, the catalogue alone is the most accurate method measured on this task, ahead of
+  CLM-8B with fine-tuned heads, in about the time of one LLM call of the 8B model. Soft labels (the official
+  distribution) and hard labels (its most probable answer) end within 0.2 points of each other.
+- Trained on the answers of an LLM, the catalogue reproduces its teacher: 50.4% for the 8B teacher, which scored
+  51.1% when it labelled the cases, and 66.6% for the 27B teacher, which scored 69.6%, at 57 ms per decision
+  instead of 188 to 249 ms for the 27B. The labelling is done once (6 minutes for the 8B, 42 for the 27B).
+- Training took 10 minutes, of which a little over 2 minutes of optimisation; the rest is embedding the examples.
+  Times per decision are the time of one `decide` call per case divided by its five questions.
+
+### Several questions about one state: prompt order
+
+`decide` puts the state first when a call has several questions with short option lists (see the usage). On Typed
+Decisions this is more accurate and faster than one question per call with the options first:
+
+<!-- table:order -->
+| Typed Decisions, 2,000 decisions | Qwen3-8B | Qwen3.8-27B (hybrid) |
+|---|---|---|
+| Options first, one question per call | 51.1% · 62 ms | 69.6% · 249 ms |
+| **State first, the five questions of a case in one call** (`decide` default) | 56.9% · 48 ms | 70.5% · 188 ms |
+| OpenJev architecture (state first, one question per call) | 59.3% · 67 ms | 69.1% · 307 ms |
+<!-- /table:order -->
+
+A turn of 15 questions about one state, with a short and a long state (the states of nine cases):
+
+<!-- table:turn -->
+| Turn of 15 questions (4 `Score`, 11 `Noul`) on one state | Short state (105 characters) | Long state (3,177 characters) |
+|---|---|---|
+| Qwen3-8B, options first | 331 ms | 2,534 ms |
+| Qwen3-8B, state first (`auto`) | 413 ms | 572 ms |
+| Qwen3.8-27B (hybrid), options first | 1,182 ms | 11,109 ms |
+| Qwen3.8-27B (hybrid), state first (`auto`) | 1,558 ms | 2,230 ms |
+<!-- /table:turn -->
+
+With a long state the state-first order is four to five times faster: the options-first order recomputes the
+state for every question. With a very short state it is slower (by 25 to 32%), because the instructions and the
+options of each question are then computed at every call; `auto` still uses it for short option lists because it
+is more accurate (table above).
+
 ### Engine: resident prefix on any architecture
 
 100 Banking77 messages, the same model with the option list resident in the cache and with the whole prompt
-recomputed at every decision; then one turn of 15 typed questions (4 `Score`, 11 `Noul`) about one state:
+recomputed at every decision:
 
 <!-- table:engine -->
-| Model | Architecture | Banking77, list resident | Banking77, prompt recomputed | Turn of 15 typed questions on one state |
-|---|---|---|---|---|
-| Qwen3-8B (36 attention layers) | qwen3 | 63.0% · 65 ms | 66.0% · 136 ms | 325 ms |
-| Qwen3.8-27B (hybrid: recurrent + attention layers, IQ2_S) | qwen35 | 76.0% · 160 ms | 76.0% · 473 ms | 1,173 ms |
+| Model | Architecture | Banking77, list resident | Banking77, prompt recomputed |
+|---|---|---|---|
+| Qwen3-8B (36 attention layers) | qwen3 | 63.0% · 65 ms | 66.0% · 137 ms |
+| Qwen3.8-27B (hybrid: recurrent + attention layers, IQ2_S) | qwen35 | 76.0% · 163 ms | 76.0% · 477 ms |
 <!-- /table:engine -->
 
 On Qwen3-8B the two Banking77 accuracies differ by three messages out of 100: llama.cpp evaluates the tail of the
@@ -316,11 +403,12 @@ which moves probabilities by up to a few hundredths on near ties. On the hybrid 
 
 ### Reading the numbers
 
-- Without training, kvindex is ahead of the OpenJev architecture on three tasks out of four and behind it on Typed
-  Decisions (few options per question, five different questions per case).
+- Without training, kvindex is ahead of the OpenJev architecture on three tasks out of four. On Typed Decisions
+  (few options per question, five different questions per case) it is behind with Qwen3-8B and ahead with the
+  27B model.
 - It keeps working where OpenJev stops (255 options) and where the list no longer fits in memory.
 - CLM-8B with heads fine-tuned on the task is ahead of untrained kvindex where a training set exists (Banking77,
-  Typed Decisions). The trained catalogue of kvindex was measured on Banking77 only.
+  Typed Decisions). The trained catalogue of kvindex is ahead of it on both.
 - With 600 queries one accuracy has a standard error of about 2 points, with 150 queries about 4. Times vary
   between sessions on the same machine: the same configuration at 10,000 options measured between 84 and 99 ms on
   one day, with identical accuracy in every repetition.
@@ -329,7 +417,11 @@ which moves probabilities by up to a few hundredths on near ties. On the hybrid 
 
 - The cached lists must fit in `n_ctx` and in memory: about 78 KB per token for Qwen3-8B with `q8_0`; a 27B model
   with 9.3 GB of weights and a 16,384-token context used 11.5 GB on a 12 GB GPU.
-- Each decision recomputes the state: a turn of many questions about one state pays the state once per question.
+- Probabilities computed by llama.cpp depend slightly on how the prompt is split into batches (the kernels are not
+  batch-invariant). On Qwen3-8B the same prompt evaluated whole, in two pieces or token by token gave the most
+  probable answer of an uncertain `Noul` question between 0.76 and 0.93; with flash attention off the spread was
+  smaller but not zero. Resident prefixes only change where the prompt is split, so their answers differ from a
+  full recomputation by the same amount; confident answers do not move.
 - `full=True` (probability of every option) is cheap on attention-only models and slow on hybrid models.
 - Accuracy on open vocabularies falls as the list grows (see the tables); the tool does not hide it.
 - A trained head helps the options it has seen and hurts the others.

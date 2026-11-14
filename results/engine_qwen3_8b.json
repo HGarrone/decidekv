@@ -5,19 +5,21 @@
   },
   "qwen3_8b/banking77/resident": {
     "acc": 0.63,
-    "ms": 64.72885000403039,
+    "ms": 64.77710000035586,
     "queries": 100
   },
   "qwen3_8b/banking77/recompute": {
     "acc": 0.66,
-    "ms": 136.3547000073595,
+    "ms": 136.85884999995324,
     "queries": 100
   },
   "qwen3_8b/turn15": {
-    "ms": 324.8728000035044,
+    "ms": 413.4773000005225,
     "questions": 15,
-    "computed_tokens": 775,
-    "reused_tokens": 1018
+    "computed_tokens": 1419,
+    "reused_tokens": 644,
+    "state_chars": 105,
+    "order": "auto"
   },
   "ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/info": {
     "architecture": "qwen35",
@@ -25,18 +27,84 @@
   },
   "ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/banking77/resident": {
     "acc": 0.76,
-    "ms": 160.07169999647886,
+    "ms": 162.545549999777,
     "queries": 100
   },
   "ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/banking77/recompute": {
     "acc": 0.76,
-    "ms": 472.7909499924863,
+    "ms": 476.5145000001212,
     "queries": 100
   },
   "ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/turn15": {
-    "ms": 1172.7225999929942,
+    "ms": 1558.1124000000273,
+    "questions": 15,
+    "computed_tokens": 1451,
+    "reused_tokens": 672,
+    "state_chars": 105,
+    "order": "auto"
+  },
+  "qwen3_8b/turn15/short/options": {
+    "ms": 330.9508000002097,
+    "questions": 15,
+    "computed_tokens": 775,
+    "reused_tokens": 1018,
+    "state_chars": 105,
+    "order": "options"
+  },
+  "qwen3_8b/turn15/short/auto": {
+    "ms": 413.4773000005225,
+    "questions": 15,
+    "computed_tokens": 1419,
+    "reused_tokens": 644,
+    "state_chars": 105,
+    "order": "auto"
+  },
+  "qwen3_8b/turn15/long/options": {
+    "ms": 2534.1614999997546,
+    "questions": 15,
+    "computed_tokens": 13405,
+    "reused_tokens": 1018,
+    "state_chars": 3177,
+    "order": "options"
+  },
+  "qwen3_8b/turn15/long/auto": {
+    "ms": 572.326500001509,
+    "questions": 15,
+    "computed_tokens": 2261,
+    "reused_tokens": 12432,
+    "state_chars": 3177,
+    "order": "auto"
+  },
+  "ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/turn15/short/options": {
+    "ms": 1181.7694999990636,
     "questions": 15,
     "computed_tokens": 805,
-    "reused_tokens": 1033
+    "reused_tokens": 1033,
+    "state_chars": 105,
+    "order": "options"
+  },
+  "ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/turn15/short/auto": {
+    "ms": 1558.1124000000273,
+    "questions": 15,
+    "computed_tokens": 1451,
+    "reused_tokens": 672,
+    "state_chars": 105,
+    "order": "auto"
+  },
+  "ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/turn15/long/options": {
+    "ms": 11109.341000001223,
+    "questions": 15,
+    "computed_tokens": 14005,
+    "reused_tokens": 1033,
+    "state_chars": 3177,
+    "order": "options"
+  },
+  "ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/turn15/long/auto": {
+    "ms": 2229.742699999406,
+    "questions": 15,
+    "computed_tokens": 2331,
+    "reused_tokens": 12992,
+    "state_chars": 3177,
+    "order": "auto"
   }
 }

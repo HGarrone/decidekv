@@ -20,7 +20,7 @@
           "none",
           "@baselines#banking77/77/kvindex|acc_ms",
           "@baselines#wordnet/200/kvindex|acc_ms",
-          "@baselines#typed/all/kvindex|acc_ms",
+          "@baselines#typed/all/kvindex-state|acc_ms",
           "@baselines#aim/225/kvindex|acc_ms"
         ],
         [
@@ -28,7 +28,7 @@
           "on the task",
           "@train#banking77/catalogue-k1-trained|acc_ms",
           "–",
-          "–",
+          "@typed_train#typed/trained-soft|acc_ms",
           "–"
         ],
         [
@@ -252,23 +252,20 @@
         "Model",
         "Architecture",
         "Banking77, list resident",
-        "Banking77, prompt recomputed",
-        "Turn of 15 typed questions on one state"
+        "Banking77, prompt recomputed"
       ],
       "rows": [
         [
           "Qwen3-8B (36 attention layers)",
           "@engine#qwen3_8b/info|text:architecture",
           "@engine#qwen3_8b/banking77/resident|acc_ms",
-          "@engine#qwen3_8b/banking77/recompute|acc_ms",
-          "@engine#qwen3_8b/turn15|ms"
+          "@engine#qwen3_8b/banking77/recompute|acc_ms"
         ],
         [
           "Qwen3.8-27B (hybrid: recurrent + attention layers, IQ2_S)",
           "@engine#ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/info|text:architecture",
           "@engine#ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/banking77/resident|acc_ms",
-          "@engine#ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/banking77/recompute|acc_ms",
-          "@engine#ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/turn15|ms"
+          "@engine#ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/banking77/recompute|acc_ms"
         ]
       ]
     },
@@ -285,7 +282,7 @@
           "**kvindex**",
           "@baselines_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#banking77/77/kvindex|acc_ms",
           "@baselines_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#wordnet/200/kvindex|acc_ms",
-          "@baselines_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#typed/all/kvindex|acc_ms",
+          "@baselines_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#typed/all/kvindex-state|acc_ms",
           "@baselines_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#aim/225/kvindex|acc_ms"
         ],
         [
@@ -294,6 +291,108 @@
           "@baselines_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#wordnet/200/openjev|acc_ms",
           "@baselines_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#typed/all/openjev|acc_ms",
           "not measured: over two hours (the whole grid is recomputed at every shot)"
+        ]
+      ]
+    },
+    "typedtrain": {
+      "header": [
+        "Typed Decisions, 2,000 test decisions",
+        "Labels used for training",
+        "Accuracy · time per decision"
+      ],
+      "rows": [
+        [
+          "Catalogue alone, untrained",
+          "none",
+          "@typed_train#typed/catalogue|acc_ms"
+        ],
+        [
+          "Catalogue alone, trained on the official answers",
+          "6,000 human labels (most probable answer)",
+          "@typed_train#typed/trained-hard|acc_ms"
+        ],
+        [
+          "**Catalogue alone, trained on the official distributions**",
+          "6,000 human labels (soft)",
+          "@typed_train#typed/trained-soft|acc_ms"
+        ],
+        [
+          "Catalogue alone, trained on the answers of Qwen3-8B (`kv.teach`)",
+          "none (the 8B labels the training states in 6 min)",
+          "@typed_train#typed/trained-teacher-qwen3_8b|acc_ms"
+        ],
+        [
+          "Catalogue alone, trained on the answers of Qwen3.8-27B (`kv.teach`)",
+          "none (the 27B labels the training states in 42 min)",
+          "@typed_train#typed/trained-teacher-ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S|acc_ms"
+        ],
+        [
+          "*kvindex with Qwen3-8B, no catalogue*",
+          "none",
+          "@baselines#typed/all/kvindex-state|acc_ms"
+        ],
+        [
+          "*kvindex with Qwen3.8-27B, no catalogue*",
+          "none",
+          "@baselines_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#typed/all/kvindex-state|acc_ms"
+        ],
+        [
+          "*CLM-8B, heads fine-tuned*",
+          "6,000 human labels",
+          "@reference#clm8b-ft/typed|acc_ms"
+        ]
+      ]
+    },
+    "order": {
+      "header": [
+        "Typed Decisions, 2,000 decisions",
+        "Qwen3-8B",
+        "Qwen3.8-27B (hybrid)"
+      ],
+      "rows": [
+        [
+          "Options first, one question per call",
+          "@baselines#typed/all/kvindex|acc_ms",
+          "@baselines_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#typed/all/kvindex|acc_ms"
+        ],
+        [
+          "**State first, the five questions of a case in one call** (`decide` default)",
+          "@baselines#typed/all/kvindex-state|acc_ms",
+          "@baselines_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#typed/all/kvindex-state|acc_ms"
+        ],
+        [
+          "OpenJev architecture (state first, one question per call)",
+          "@baselines#typed/all/openjev|acc_ms",
+          "@baselines_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#typed/all/openjev|acc_ms"
+        ]
+      ]
+    },
+    "turn": {
+      "header": [
+        "Turn of 15 questions (4 `Score`, 11 `Noul`) on one state",
+        "Short state (105 characters)",
+        "Long state (3,177 characters)"
+      ],
+      "rows": [
+        [
+          "Qwen3-8B, options first",
+          "@engine#qwen3_8b/turn15/short/options|ms",
+          "@engine#qwen3_8b/turn15/long/options|ms"
+        ],
+        [
+          "Qwen3-8B, state first (`auto`)",
+          "@engine#qwen3_8b/turn15/short/auto|ms",
+          "@engine#qwen3_8b/turn15/long/auto|ms"
+        ],
+        [
+          "Qwen3.8-27B (hybrid), options first",
+          "@engine#ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/turn15/short/options|ms",
+          "@engine#ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/turn15/long/options|ms"
+        ],
+        [
+          "Qwen3.8-27B (hybrid), state first (`auto`)",
+          "@engine#ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/turn15/short/auto|ms",
+          "@engine#ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/turn15/long/auto|ms"
         ]
       ]
     }

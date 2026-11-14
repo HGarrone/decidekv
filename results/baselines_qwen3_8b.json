@@ -79,5 +79,15 @@
     "ms": 422.5461999994877,
     "games": 20,
     "mean_shots_when_won": 10.6
+  },
+  "typed/all/kvindex-state": {
+    "acc": 0.5685,
+    "ms": 48.27211999981955,
+    "decisions": 2000,
+    "by_type": {
+      "choice": 0.5566666666666666,
+      "noul": 0.6383333333333333,
+      "score": 0.525
+    }
   }
 }

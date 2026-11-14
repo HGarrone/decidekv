@@ -63,7 +63,7 @@ LIST_PROMPTS = {
 METHODS = {
     "wordnet": ["emb", "emb+llm", "kvindex", "state-first", "openjev", "cross", "clm8b", "clm8b-ft"],
     "banking77": ["emb", "emb+llm", "kvindex", "state-first", "openjev", "cross", "clm8b", "clm8b-ft"],
-    "typed": ["prior", "emb", "kvindex", "openjev", "clm8b", "clm8b-ft"],
+    "typed": ["prior", "emb", "kvindex", "kvindex-state", "openjev", "clm8b", "clm8b-ft"],
     "aim": ["random", "kvindex", "openjev", "clm8b"],
 }
 TOP_K = 50
@@ -373,26 +373,38 @@ def typed_task(r: Runner):
         enc.close()
         del enc
         gc.collect()
-    if "kvindex" in todo or "openjev" in todo:
+    if "kvindex" in todo or "kvindex-state" in todo or "openjev" in todo:
         kv = r.kv(a.n_ctx)
         be = kv.client
-        for method in ("kvindex", "openjev"):
+
+        def key_of(ans):
+            if ans.type == "choice":
+                return ans.choice
+            if ans.type == "score":
+                return max(ans.probabilities, key=ans.probabilities.get)
+            return "true" if ans.noul >= 0.5 else "false"
+
+        for method in ("kvindex", "kvindex-state", "openjev"):
             if method not in todo:
                 continue
             preds, ms = [], []
             for c in test:
                 state = to_text(c["state"])
                 p = {}
+                if method == "kvindex-state":
+                    t0 = time.perf_counter()
+                    r_all = kv.decide(state, c["questions"], order="state")
+                    share = 1000 * (time.perf_counter() - t0) / len(c["questions"])
+                    for qid in c["questions"]:
+                        p[qid] = key_of(r_all.answers[qid])
+                        ms.append(share)
+                    preds.append(p)
+                    continue
                 for qid, qd in c["questions"].items():
                     t0 = time.perf_counter()
                     if method == "kvindex":
                         ans = kv.decide(state, {qid: qd}).answers[qid]
-                        if ans.type == "choice":
-                            p[qid] = ans.choice
-                        elif ans.type == "score":
-                            p[qid] = max(ans.probabilities, key=ans.probabilities.get)
-                        else:
-                            p[qid] = "true" if ans.noul >= 0.5 else "false"
+                        p[qid] = key_of(ans)
                     else:
                         q, ix, instr = kv.question_index(qd, warm=False)
                         lab = openjev_pick(be, ix, state, instr, ix.labels or ix.keys)
