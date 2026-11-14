@@ -204,7 +204,15 @@ slower.
 `kv_on_gpu=False` keeps the cache in system memory when the weights fill the GPU. `KV(model, backend="ollama")`
 talks to the Ollama server instead: it gives the same kind of answers, but the confidence of a choice is not available
 there (it is reported as 0), the server recomputes the list on hybrid models, and every number below was measured
-with the llama.cpp engine. Call `kv.close()` to free the GPU.
+with the llama.cpp engine unless stated. Call `kv.close()` to free the GPU.
+
+`KV(model, backend="llamaserver")` uses a llama.cpp `llama-server`: kvindex starts one on the model with the
+llama.cpp build it finds (`n_ctx`, `slots`, `port`, `kv_type` go to `LlamaServer.start`), or
+`KV(model, backend="llamaserver", host="http://127.0.0.1:8080")` connects to a server you started yourself with
+several slots (`-np`). Each resident prefix gets a slot of its own; one slot is kept for the other prompts, and each
+slot holds `n_ctx / slots` tokens. Use it to share one loaded model between programs or to run the model on another
+machine. Answers are decoded with a grammar of the option names, so they are always one of the options; `full=True`
+is not available on this engine.
 
 Above 3,000 options the catalogue vectors can be kept on disk between runs:
 `kv.index(options, vectors=Catalog.cached(texts, kv.encoder, "cache_folder"))` with `from kvindex.catalog import
@@ -382,18 +390,25 @@ Decisions this is more accurate and faster than one question per call with the o
 A turn of 15 questions about one state, with a short and a long state (the states of nine cases):
 
 <!-- table:turn -->
-| Turn of 15 questions (4 `Score`, 11 `Noul`) on one state | Short state (105 characters) | Long state (3,177 characters) |
+| Turn of 15 questions (4 `Score`, 11 `Noul`) on one state | Short state (99 characters) | Long state (3,177 characters) |
 |---|---|---|
-| Qwen3-8B, options first | 331 ms | 2,534 ms |
-| Qwen3-8B, state first (`auto`) | 413 ms | 572 ms |
-| Qwen3.8-27B (hybrid), options first | 1,182 ms | 11,109 ms |
-| Qwen3.8-27B (hybrid), state first (`auto`) | 1,558 ms | 2,230 ms |
+| Qwen3-8B, options first | 333 ms | 2,555 ms |
+| Qwen3-8B, state first (`auto`) | 415 ms | 573 ms |
+| Qwen3-8B on `llama-server`, options first | 430 ms | 904 ms |
+| Qwen3-8B on `llama-server`, state first (`auto`) | 466 ms | 615 ms |
+| Qwen3.8-27B (hybrid), options first | 1,216 ms | 11,209 ms |
+| Qwen3.8-27B (hybrid), state first (`auto`) | 1,587 ms | 2,255 ms |
 <!-- /table:turn -->
 
-With a long state the state-first order is four to five times faster: the options-first order recomputes the
-state for every question. With a very short state it is slower (by 25 to 32%), because the instructions and the
+With a long state the state-first order is four to five times faster in process: the options-first order recomputes the
+state for every question. With a very short state it is slower (by 25 to 31%), because the instructions and the
 options of each question are then computed at every call; `auto` still uses it for short option lists because it
-is more accurate (table above).
+is more accurate (table above). Every turn has a new state, so no engine can reuse the state of the previous turn.
+
+On `llama-server` the options-first order loses less with a long state (904 ms against 2,555 ms in process): the
+11 `Noul` questions use the same option list, hence the same server slot, and the server reuses the whole common
+prefix of consecutive prompts in a slot, state included. The in-process engine reuses only the resident prefix and
+recomputes the rest; reusing the common prefix after it is a possible improvement.
 
 ### Engine: resident prefix on any architecture
 
@@ -404,7 +419,8 @@ recomputed at every decision:
 | Model | Architecture | Banking77, list resident | Banking77, prompt recomputed |
 |---|---|---|---|
 | Qwen3-8B (36 attention layers) | qwen3 | 63.0% · 65 ms | 66.0% · 137 ms |
-| Qwen3.8-27B (hybrid: recurrent + attention layers, IQ2_S) | qwen35 | 76.0% · 163 ms | 76.0% · 477 ms |
+| Qwen3.8-27B (hybrid: recurrent + attention layers, IQ2_S) | qwen35 | 76.0% · 163 ms | 76.0% · 479 ms |
+| Qwen3-8B on `llama-server` (8 slots) | qwen3 | 63.0% · 75 ms | not measured |
 <!-- /table:engine -->
 
 On Qwen3-8B the two Banking77 accuracies differ by three messages out of 100: llama.cpp evaluates the tail of the
@@ -467,10 +483,11 @@ and the Typed Decisions dataset (Apache-2.0).
 
 ```
 kvindex/        the library: core.py (cached index, typed questions), catalog.py (embedding catalogue),
-                train.py (optional training), llamacpp.py and ollama.py (engines)
+                train.py (optional training), llamacpp.py, llamaserver.py and ollama.py (engines)
 tests/          offline tests with a fake engine
 examples/       quickstart.py
 benchmarks/     baselines.py (comparison), scale.py (growing lists), train_bench.py (training),
+                typed_train_bench.py (training on typed questions), engine_bench.py (engines, turns),
                 checks.py (correctness checks to run first), report.py (tables)
 results/        raw results of every benchmark
 paper/          article and figures

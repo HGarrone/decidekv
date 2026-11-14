@@ -46,20 +46,21 @@ def banking(kv, options, queries, recompute):
 
 
 def turn(kv, state, order, repeats=4):
-    """Median ms of a turn of 15 typed questions (4 Score, 11 Noul) about one state,
-    in one prompt order, and its token counts. The first turn (which fills the cache
-    with the option lists) is not counted."""
+    """Median ms of a turn of 15 typed questions (4 Score, 11 Noul) about one state, in one prompt order, and its
+    token counts. The first turn (which fills the cache with the option lists) is not counted. Every turn has a new
+    state (a turn number in front), so no engine can reuse the state of the previous turn."""
     qs = {f"s{i}": Score(instructions=f"How strong is quality {i} of the scene?",
                          criteria=["none", "weak", "medium", "strong"]) for i in range(4)}
     qs.update({f"n{i}": Noul(instructions=f"Is condition number {i} true in this scene?") for i in range(11)})
+    text = state if isinstance(state, str) else to_text(state)
     ms = []
-    for _ in range(repeats):
+    for i in range(repeats):
         t0 = time.perf_counter()
-        r = kv.decide(state, qs, order=order)
+        r = kv.decide(f"Turn {i + 1}.\n{text}", qs, order=order)
         t1 = time.perf_counter()
         ms.append((t1 - t0) * 1000)
     return {"ms": statistics.median(ms[1:]), "questions": 15, "computed_tokens": r.usage.input_tokens,
-            "reused_tokens": r.usage.cached_tokens, "state_chars": len(str(state)), "order": order}
+            "reused_tokens": r.usage.cached_tokens, "state_chars": len(text), "order": order}
 
 
 def main():
@@ -70,6 +71,8 @@ def main():
     parser.add_argument("--n-ctx", type=int, default=8192, help="Context size")
     parser.add_argument("--kv-type", default="q8_0", help="KV cache type")
     parser.add_argument("--out", default="engine_qwen3_8b.json", help="Output JSON file")
+    parser.add_argument("--backend", default="llamacpp", choices=["llamacpp", "llamaserver"], help="Engine")
+    parser.add_argument("--slots", type=int, default=8, help="llama-server slots (each gets n_ctx / slots tokens)")
     a = parser.parse_args()
 
     res = load_json(a.out)
@@ -77,12 +80,20 @@ def main():
     long_state = " ".join(to_text(c["state"]) for c in typed_decisions("test")[:9])
 
     for model in a.models.split(","):
-        kv = KV(model, n_ctx=a.n_ctx, kv_type=a.kv_type)
+        if a.backend == "llamacpp":
+            kv = KV(model, n_ctx=a.n_ctx, kv_type=a.kv_type)
+        else:
+            kv = KV(model, backend="llamaserver", n_ctx=a.n_ctx, kv_type=a.kv_type, slots=a.slots)
         try:
-            key = label(model)
-            res[f"{key}/info"] = {"architecture": kv.client.architecture(), "tail_removal": kv.client.can_cut}
-            res[f"{key}/banking77/resident"] = banking(kv, options, queries, False)
-            res[f"{key}/banking77/recompute"] = banking(kv, options, queries, True)
+            if a.backend == "llamacpp":
+                key = label(model)
+                res[f"{key}/info"] = {"architecture": kv.client.architecture(), "tail_removal": kv.client.can_cut}
+                res[f"{key}/banking77/resident"] = banking(kv, options, queries, False)
+                res[f"{key}/banking77/recompute"] = banking(kv, options, queries, True)
+            else:
+                key = label(model) + "/llamaserver"
+                res[f"{key}/info"] = {"architecture": "", "slots": a.slots, "n_ctx": a.n_ctx}
+                res[f"{key}/banking77/resident"] = banking(kv, options, queries, False)
             for sname, state in (("short", STATE), ("long", long_state)):
                 for order in ("options", "auto"):
                     res[f"{key}/turn15/{sname}/{order}"] = turn(kv, state, order)

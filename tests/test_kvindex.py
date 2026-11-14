@@ -459,3 +459,71 @@ def test_no_fallback_when_every_option_was_trained():
         idx.choose(f"{w} {w}")
     assert idx.fallbacks == 0
     assert kv.client.prompts == []
+
+
+def fake_server(slots=3, reply=None):
+    """A LlamaServer that never opens a connection: `_post` records the request and returns `reply`."""
+    from kvindex.llamaserver import LlamaServer
+    srv = LlamaServer.__new__(LlamaServer)
+    srv.host, srv.timeout, srv.process, srv.slots, srv.n_ctx = "http://fake", 1, None, slots, 4096
+    srv._wrap, srv.scratch, srv.model_path = ("<u>", "</u>"), slots - 1, ""
+    from collections import OrderedDict
+    srv._slot_of = OrderedDict()
+    srv.sent = []
+
+    def post(path, body):
+        srv.sent.append((path, body))
+        return reply or {}
+    srv._post = post
+    return srv
+
+
+def test_server_gbnf_literal():
+    from kvindex.llamaserver import _gbnf_literal
+    assert _gbnf_literal('say "hi"\\now') == '"say \\"hi\\"\\\\now"'
+    assert _gbnf_literal("card arrival") == '"card arrival"'
+
+
+def test_server_slots_lru():
+    srv = fake_server(slots=3)
+    srv.prefill(["A", "x"])
+    srv.prefill(["B", "x"])
+    assert srv._slot_of == {"A": 0, "B": 1}
+    srv.prefill(["A", "y"])
+    srv.prefill(["C", "x"])
+    assert dict(srv._slot_of) == {"A": 0, "C": 1}
+    assert srv.sent[-1][1]["id_slot"] == 1
+    srv.prefill(["D", "x"])
+    assert dict(srv._slot_of) == {"C": 1, "D": 0}
+    srv.release("C")
+    srv.label_logprobs(["C", "q"], ["Yes", "No"])
+    assert srv.sent[-1][1]["id_slot"] == 2
+    assert srv.sent[-1][1]["prompt"] == "<u>Cq</u>"
+
+
+def test_server_label_logprobs():
+    reply = {"completion_probabilities": [{"token": "Yes", "logprob": -0.1, "top_logprobs": [
+        {"token": "Yes", "logprob": math.log(0.6)}, {"token": " Yes", "logprob": math.log(0.1)},
+        {"token": "No", "logprob": math.log(0.2)}]}], "timings": {"prompt_n": 5, "cache_n": 40}, "tokens_predicted": 1}
+    srv = fake_server(reply=reply)
+    lp, st = srv.label_logprobs(["s", "q"], ["Yes", "No", "Maybe"])
+    assert abs(math.exp(lp["Yes"]) - 0.7) < 1e-9
+    assert abs(math.exp(lp["No"]) - 0.2) < 1e-9
+    assert lp["Maybe"] == -30.0
+    assert st == {"input_tokens": 5, "cached_tokens": 40, "output_tokens": 1}
+    assert srv.sent[0][1]["n_probs"] == 100
+    assert srv.sent[0][1]["n_predict"] == 1
+
+
+def test_server_pick_option():
+    reply = {"content": "lost card", "completion_probabilities": [{"token": "lost", "logprob": -0.5},
+            {"token": " card", "logprob": -0.25}, {"token": "", "logprob": -0.01}], "timings": {},
+             "tokens_predicted": 3}
+    srv = fake_server(reply=reply)
+    options = ["card arrival", "lost card", "refund"]
+    text, lp, st = srv.pick_option(["s", "q"], options, allowed=["lost card", "refund"])
+    assert text == "lost card"
+    assert abs(lp + 0.75) < 1e-12
+    assert srv.sent[0][1]["grammar"] == 'root ::= "lost card" | "refund"'
+    with pytest.raises(NotImplementedError):
+        srv.score_options(["s", "q"], ["a", "b"])

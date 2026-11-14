@@ -256,18 +256,25 @@ the options-first order on this task with Qwen3-8B. It is also faster, because t
 A turn of 15 questions about one state, with a short and a long state (the states of nine cases):
 
 <!-- table:turn -->
-| Turn of 15 questions (4 `Score`, 11 `Noul`) on one state | Short state (105 characters) | Long state (3,177 characters) |
+| Turn of 15 questions (4 `Score`, 11 `Noul`) on one state | Short state (99 characters) | Long state (3,177 characters) |
 |---|---|---|
-| Qwen3-8B, options first | 331 ms | 2,534 ms |
-| Qwen3-8B, state first (`auto`) | 413 ms | 572 ms |
-| Qwen3.8-27B (hybrid), options first | 1,182 ms | 11,109 ms |
-| Qwen3.8-27B (hybrid), state first (`auto`) | 1,558 ms | 2,230 ms |
+| Qwen3-8B, options first | 333 ms | 2,555 ms |
+| Qwen3-8B, state first (`auto`) | 415 ms | 573 ms |
+| Qwen3-8B on `llama-server`, options first | 430 ms | 904 ms |
+| Qwen3-8B on `llama-server`, state first (`auto`) | 466 ms | 615 ms |
+| Qwen3.8-27B (hybrid), options first | 1,216 ms | 11,209 ms |
+| Qwen3.8-27B (hybrid), state first (`auto`) | 1,587 ms | 2,255 ms |
 <!-- /table:turn -->
 
-With a long state the state-first order is four to five times faster: the options-first order recomputes the
-state for every question. With a very short state it is slower (by 25 to 32%), because the instructions and the
+With a long state the state-first order is four to five times faster in process: the options-first order recomputes the
+state for every question. With a very short state it is slower (by 25 to 31%), because the instructions and the
 options of each question are then computed at every call; `auto` still uses it for short option lists because it
-is more accurate (table above).
+is more accurate (table above). Every turn has a new state, so no engine can reuse the state of the previous turn.
+
+On `llama-server` the options-first order loses less with a long state (904 ms against 2,555 ms in process): the
+11 `Noul` questions use the same option list, hence the same server slot, and the server reuses the whole common
+prefix of consecutive prompts in a slot, state included. The in-process engine reuses only the resident prefix and
+recomputes the rest; reusing the common prefix after it is a possible improvement.
 
 ### Resident prefix on any architecture
 
@@ -278,7 +285,8 @@ recomputed at every decision:
 | Model | Architecture | Banking77, list resident | Banking77, prompt recomputed |
 |---|---|---|---|
 | Qwen3-8B (36 attention layers) | qwen3 | 63.0% · 65 ms | 66.0% · 137 ms |
-| Qwen3.8-27B (hybrid: recurrent + attention layers, IQ2_S) | qwen35 | 76.0% · 163 ms | 76.0% · 477 ms |
+| Qwen3.8-27B (hybrid: recurrent + attention layers, IQ2_S) | qwen35 | 76.0% · 163 ms | 76.0% · 479 ms |
+| Qwen3-8B on `llama-server` (8 slots) | qwen3 | 63.0% · 75 ms | not measured |
 <!-- /table:engine -->
 
 On Qwen3-8B the two Banking77 accuracies differ by three messages out of 100: llama.cpp evaluates the tail of the
@@ -297,6 +305,7 @@ zero). Confident answers do not move.
 
 - The cached lists must fit in the context and in memory.
 - Probabilities depend slightly on how llama.cpp splits the prompt into batches (see the engine section).
+- `full=True` is not available on the llama-server engine.
 - The probability of every option (`full=True`) costs as much as a greedy decision on Qwen3-8B (50 ms for 77
   options) and about 2.3 s on the hybrid 27B.
 - The trained catalogue was measured on two datasets (Banking77, Typed Decisions).
@@ -309,12 +318,14 @@ zero). Confident answers do not move.
 python benchmarks/checks.py --baselines        # correctness checks, to run first
 python benchmarks/baselines.py --task banking77
 python benchmarks/baselines.py --task wordnet --sizes 200 --methods kvindex,openjev
-python benchmarks/baselines.py --task typed --methods kvindex,openjev
+python benchmarks/baselines.py --task typed --methods kvindex,kvindex-state,openjev
 python benchmarks/baselines.py --task aim --methods kvindex,openjev
 python benchmarks/scale.py --sizes 1000,3000,10000,30000
 python benchmarks/scale.py --sizes 200,1000,3000,10000,30000 --queries 150 --core 200
 python benchmarks/train_bench.py
+python benchmarks/typed_train_bench.py --teachers qwen3:8b,hf.co/ISTA-DASLab/Qwen3.8-27B-GSQ-RCO-GGUF:IQ2_S
 python benchmarks/engine_bench.py --models qwen3:8b,hf.co/ISTA-DASLab/Qwen3.8-27B-GSQ-RCO-GGUF:IQ2_S
+python benchmarks/engine_bench.py --backend llamaserver --n-ctx 32768 --slots 8
 python benchmarks/report.py                    # tables of this article and of the README
 python paper/figures.py                        # figures
 ```

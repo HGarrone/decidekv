@@ -272,6 +272,12 @@
           "@engine#ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/info|text:architecture",
           "@engine#ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/banking77/resident|acc_ms",
           "@engine#ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/banking77/recompute|acc_ms"
+        ],
+        [
+          "Qwen3-8B on `llama-server` (8 slots)",
+          "qwen3",
+          "@engine#qwen3_8b/llamaserver/banking77/resident|acc_ms",
+          "not measured"
         ]
       ]
     },
@@ -376,7 +382,7 @@
     "turn": {
       "header": [
         "Turn of 15 questions (4 `Score`, 11 `Noul`) on one state",
-        "Short state (105 characters)",
+        "Short state (99 characters)",
         "Long state (3,177 characters)"
       ],
       "rows": [
@@ -389,6 +395,16 @@
           "Qwen3-8B, state first (`auto`)",
           "@engine#qwen3_8b/turn15/short/auto|ms",
           "@engine#qwen3_8b/turn15/long/auto|ms"
+        ],
+        [
+          "Qwen3-8B on `llama-server`, options first",
+          "@engine#qwen3_8b/llamaserver/turn15/short/options|ms",
+          "@engine#qwen3_8b/llamaserver/turn15/long/options|ms"
+        ],
+        [
+          "Qwen3-8B on `llama-server`, state first (`auto`)",
+          "@engine#qwen3_8b/llamaserver/turn15/short/auto|ms",
+          "@engine#qwen3_8b/llamaserver/turn15/long/auto|ms"
         ],
         [
           "Qwen3.8-27B (hybrid), options first",

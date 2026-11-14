@@ -286,8 +286,10 @@ class KV:
     def __init__(self, model: str, backend: str = "llamacpp", host: str | None = None, keep_alive: str = "30m",
                  embed: Any = None, flat_max: int = 3000, query_template: str | None = None, **backend_kw):
         """backend="llamacpp" (default: in-process llama.cpp; loads the GGUF that Ollama already downloaded, or a
-        .gguf path; extra keyword arguments such as n_ctx and kv_type go to the backend) or "ollama" (talks to the
-        Ollama server).
+        .gguf path; extra keyword arguments such as n_ctx and kv_type go to the backend) or "llamaserver" (a
+        llama.cpp `llama-server`: with `host` the URL of a running server, without it kvindex starts one on the
+        model; extra keyword arguments such as n_ctx, slots and port go to `LlamaServer.start`) or "ollama"
+        (talks to the Ollama server).
 
         `embed` is the embedding model of the catalogue used for option sets larger than `flat_max` (a model name
         such as "qwen3-embedding:4b", or any callable that maps a list of texts to L2-normalised vectors).
@@ -298,8 +300,11 @@ class KV:
         elif backend == "llamacpp":
             from .llamacpp import LlamaCpp
             self.client = LlamaCpp(model, **backend_kw)
+        elif backend == "llamaserver":
+            from .llamaserver import LlamaServer
+            self.client = LlamaServer(host) if host else LlamaServer.start(model, **backend_kw)
         else:
-            raise ValueError(f"unknown backend {backend!r} (use 'ollama' or 'llamacpp')")
+            raise ValueError(f"unknown backend {backend!r} (use 'llamacpp', 'llamaserver' or 'ollama')")
         self.model = model
         self.backend = backend
         self.embed = embed
