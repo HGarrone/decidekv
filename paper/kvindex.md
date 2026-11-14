@@ -33,7 +33,8 @@ the question. In a causal LLM the keys and values of a token depend only on the 
 the list is computed once and reused exactly by every later call. The list is a *resident prefix*: it lives in a
 sequence of its own and is copied into the working sequence at every decision (cache cells are shared, a recurrent
 state is copied), which makes the reuse available on models with recurrent layers too, and lets several lists stay
-resident at the same time. A decision evaluates only the tokens of the state
+resident at the same time. On models with recurrent layers llama.cpp slows down by an order of magnitude
+beyond eight sequences in total, so seven lists are resident by default. A decision evaluates only the tokens of the state
 and of the question; these tokens attend to every token of every option. The answer is decoded through a trie of
 the option names, so it is always one of the options, and options already refuted can be excluded from the
 decoding.
@@ -116,6 +117,22 @@ it on Typed Decisions, where every case asks five different questions with few o
 below both on the four tasks; with heads fine-tuned on the task it is ahead of untrained kvindex on Banking77 and
 Typed Decisions.
 
+### The same comparison on a hybrid 27B model
+
+Qwen3.8-27B (IQ2_S, architecture `qwen35`: recurrent and attention layers). Same tasks, prompt and engine; CLM-8B
+cannot run here because its released heads belong to Qwen3-8B. Context of 8,192 tokens for Typed Decisions and the
+aim game, so that the 9.3 GB of weights and the cache fit in 12 GB:
+
+<!-- table:hybrid27b -->
+| Method | Banking77 (77 intents) | WordNet (200 words) | Typed Decisions | Aim game (games won, time per shot) |
+|---|---|---|---|---|
+| **kvindex** | 73.0% · 161 ms | 82.7% · 106 ms | 69.6% · 249 ms | 100.0% · 340 ms |
+| OpenJev architecture, shared prompt | 45.7% · 409 ms | 84.0% · 600 ms | 69.1% · 307 ms | not measured: over two hours (the whole grid is recomputed at every shot) |
+<!-- /table:hybrid27b -->
+
+With a 16,384-token context the same aim game took 1.25 s per shot on this model: the weights and the cache
+filled the 12 GB and part of the cache spilled into system memory. Keep `n_ctx` to what the lists need.
+
 ### Growing lists
 
 <!-- table:scale -->
@@ -185,8 +202,8 @@ recomputed at every decision; then one turn of 15 typed questions (4 `Score`, 11
 <!-- table:engine -->
 | Model | Architecture | Banking77, list resident | Banking77, prompt recomputed | Turn of 15 typed questions on one state |
 |---|---|---|---|---|
-| Qwen3-8B (36 attention layers) | qwen3 | 63.0% · 66 ms | 66.0% · 138 ms | 330 ms |
-| Qwen3.8-27B (hybrid: recurrent + attention layers, IQ2_S) | qwen35 | 76.0% · 174 ms | 76.0% · 505 ms | 1,251 ms |
+| Qwen3-8B (36 attention layers) | qwen3 | 63.0% · 65 ms | 66.0% · 136 ms | 325 ms |
+| Qwen3.8-27B (hybrid: recurrent + attention layers, IQ2_S) | qwen35 | 76.0% · 160 ms | 76.0% · 473 ms | 1,173 ms |
 <!-- /table:engine -->
 
 On Qwen3-8B the two Banking77 accuracies differ by three messages out of 100: llama.cpp evaluates the tail of the

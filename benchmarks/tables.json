@@ -271,6 +271,31 @@
           "@engine#ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/turn15|ms"
         ]
       ]
+    },
+    "hybrid27b": {
+      "header": [
+        "Method",
+        "Banking77 (77 intents)",
+        "WordNet (200 words)",
+        "Typed Decisions",
+        "Aim game (games won, time per shot)"
+      ],
+      "rows": [
+        [
+          "**kvindex**",
+          "@baselines_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#banking77/77/kvindex|acc_ms",
+          "@baselines_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#wordnet/200/kvindex|acc_ms",
+          "@baselines_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#typed/all/kvindex|acc_ms",
+          "@baselines_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#aim/225/kvindex|acc_ms"
+        ],
+        [
+          "OpenJev architecture, shared prompt",
+          "@baselines_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#banking77/77/openjev|acc_ms",
+          "@baselines_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#wordnet/200/openjev|acc_ms",
+          "@baselines_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#typed/all/openjev|acc_ms",
+          "not measured: over two hours (the whole grid is recomputed at every shot)"
+        ]
+      ]
     }
   }
 }

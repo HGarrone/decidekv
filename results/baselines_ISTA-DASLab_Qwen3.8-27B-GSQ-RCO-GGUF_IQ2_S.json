@@ -1,0 +1,50 @@
+{
+  "banking77/77/openjev": {
+    "acc": 0.45666666666666667,
+    "ms": 409.1265000170097,
+    "queries": 300
+  },
+  "wordnet/200/openjev": {
+    "acc": 0.84,
+    "ms": 600.0674999959301,
+    "queries": 150
+  },
+  "banking77/77/kvindex": {
+    "acc": 0.73,
+    "ms": 161.09865000180434,
+    "queries": 300,
+    "build_s": 0.6285568000166677
+  },
+  "wordnet/200/kvindex": {
+    "acc": 0.8266666666666667,
+    "ms": 105.77899999043439,
+    "queries": 150,
+    "build_s": 0.7833089999912772
+  },
+  "aim/225/kvindex": {
+    "acc": 1.0,
+    "ms": 340.0934000092093,
+    "games": 20,
+    "mean_shots_when_won": 3.85
+  },
+  "typed/all/kvindex": {
+    "acc": 0.696,
+    "ms": 249.28004998946562,
+    "decisions": 2000,
+    "by_type": {
+      "choice": 0.6633333333333333,
+      "noul": 0.7616666666666667,
+      "score": 0.67125
+    }
+  },
+  "typed/all/openjev": {
+    "acc": 0.691,
+    "ms": 307.3623500094982,
+    "decisions": 2000,
+    "by_type": {
+      "choice": 0.7133333333333334,
+      "noul": 0.735,
+      "score": 0.64125
+    }
+  }
+}

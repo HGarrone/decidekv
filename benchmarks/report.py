@@ -2,6 +2,7 @@
 Tables of the README and of the article, generated from the result files.
 
 `benchmarks/tables.json` describes every table: literal cells, and cells that point to a number in `results/`.
+A reference `@NAME#KEY|SHOW` reads `results/NAME_<suffix>.json`, or `results/NAME` when NAME ends with .json.
 Each document holds markers `<!-- table:NAME -->` ... `<!-- /table:NAME -->`; the text between them is replaced.
 
     python benchmarks/report.py
@@ -38,7 +39,7 @@ def render(cell, results, suffix):
         return cell
     name, rest = cell[1:].split("#", 1)
     key, show = rest.rsplit("|", 1)
-    file_path = os.path.join(ROOT, "results", f"{name}_{suffix}.json")
+    file_path = os.path.join(ROOT, "results", name if name.endswith(".json") else f"{name}_{suffix}.json")
     if file_path not in results:
         try:
             with open(file_path, encoding="utf8") as f:

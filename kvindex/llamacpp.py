@@ -97,7 +97,7 @@ class LlamaCpp:
     """Backend for `KV(model, backend="llamacpp")`."""
 
     def __init__(self, model: str, n_ctx: int = 16384, n_batch: int = 2048, n_gpu_layers: int = -1,
-                 kv_type: str = "f16", verbose: bool = False, resident: int = 8, kv_on_gpu: bool = True):
+                 kv_type: str = "f16", verbose: bool = False, resident: int = 7, kv_on_gpu: bool = True):
         L = _llama_cpp()
         self.L = L
         self.model, self.path = model, ollama_gguf(model)
@@ -106,6 +106,7 @@ class LlamaCpp:
         p = L.llama_context_default_params()
         p.n_ctx, p.n_batch, p.n_ubatch = n_ctx, n_batch, min(512, n_batch)
         p.n_seq_max, p.kv_unified = resident + 1, True          # sequence 0 works, the others hold resident prefixes
+        # more than 8 sequences in total make models with recurrent layers up to 10x slower (llama.cpp b11312)
         p.flash_attn_type = L.LLAMA_FLASH_ATTN_TYPE_ENABLED
         p.type_k = p.type_v = KV_TYPES[kv_type]
         p.offload_kqv, p.no_perf = kv_on_gpu, True

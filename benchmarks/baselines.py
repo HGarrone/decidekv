@@ -118,7 +118,8 @@ def openjev_pick(be, ix, state, instructions=None, labels=None):
 class Runner:
     def __init__(self, a):
         self.a = a
-        self.out_name = f"baselines_{a.llm.replace(':', '_')}.json"
+        tag = a.llm.replace("hf.co/", "").replace(":", "_").replace("/", "_")
+        self.out_name = f"baselines_{tag}.json"
         self.res = load_json(self.out_name)
 
     def want(self, task, n, method):
@@ -373,7 +374,7 @@ def typed_task(r: Runner):
         del enc
         gc.collect()
     if "kvindex" in todo or "openjev" in todo:
-        kv = r.kv(16384)
+        kv = r.kv(a.n_ctx)
         be = kv.client
         for method in ("kvindex", "openjev"):
             if method not in todo:
@@ -519,7 +520,7 @@ def aim_task(r: Runner):
         rr = random.Random(0)
         play("random", lambda state, tried: rr.choice([c for c in cells if c not in tried]))
     if "kvindex" in todo or "openjev" in todo:
-        kv = r.kv(16384)
+        kv = r.kv(a.n_ctx)
         be = kv.client
         if "kvindex" in todo:
             idx = kv.index(cells, **AIM_PROMPT)
@@ -559,6 +560,7 @@ def main():
     ap.add_argument("--methods", default="all")
     ap.add_argument("--limit", type=int, default=0, help="typed: first N test cases only (smoke test)")
     ap.add_argument("--redo", action="store_true", help="recompute entries already in the results file")
+    ap.add_argument("--n-ctx", type=int, default=16384, help="context of the typed and aim tasks")
     a = ap.parse_args()
     a.methods = METHODS[a.task] if a.methods == "all" else a.methods.split(",")
     a.queries = a.queries or {"wordnet": 150, "banking77": 300}.get(a.task, 0)
