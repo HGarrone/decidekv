@@ -81,7 +81,13 @@ def main():
         }
         for name, subset in groups.items():
             log(f"half-{name}", measure(TopKIndex(kv, options, kv.encoder, k=1, **PROMPT), subset))
-            log(f"half-{name}-trained", measure(kv.index(options, k=1, head=half, **PROMPT), subset))
+            idx = kv.index(options, k=1, head=half, **PROMPT)
+            before = idx.fallbacks
+            row = measure(idx, subset)
+            row["fallback_rate"] = (idx.fallbacks - before) / len(subset)
+            log(f"half-{name}-trained", row)
+            off = kv.index(options, k=1, head=half, fallback=0, **PROMPT)
+            log(f"half-{name}-trained-nofallback", measure(off, subset))
     finally:
         kv.close()
 

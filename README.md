@@ -135,8 +135,9 @@ intents.choose("where is my card?").choice
 ```
 
 With a trained head the catalogue decides alone (no LLM call) unless you pass `k` greater than 1. A head belongs
-to the embedding model and to the list of options it was trained with. It lowers the accuracy on options that had
-no training example (see the results), so train with examples for every option you care about.
+to the embedding model and to the list of options it was trained with. Options without training examples are
+answered worse; a fallback to the LLM (`fallback=5`, the default) recovers part of the loss (see the results), but
+training with examples for every option you care about works best.
 
 ### Training on typed questions, with or without labels
 
@@ -238,7 +239,7 @@ generated from the files in `results/` by `python benchmarks/report.py`.
 | Method | Training | Banking77 (77 intents) | WordNet (200 words) | Typed Decisions | Aim game (games won, time per shot) |
 |---|---|---|---|---|---|
 | **kvindex** | none | 60.7% · 65 ms | 70.7% · 38 ms | 56.9% · 48 ms | 95.0% · 159 ms |
-| **kvindex, trained catalogue** | on the task | 93.0% · 15 ms | – | 75.6% · 57 ms | – |
+| **kvindex, trained catalogue** | on the task | 93.0% · 16 ms | – | 75.6% · 57 ms | – |
 | OpenJev architecture, shared prompt | none | 39.7% · 90 ms | 63.3% · 132 ms | 59.3% · 67 ms | 25.0% · 423 ms |
 | OpenJev library, own prompt, Ollama | none | 44.0% · 117 ms | 22.7% · 164 ms | 58.1% · 62 ms | 25.0% · 469 ms |
 | CLM-8B as released | none | 4.3% · 35 ms | 12.7% · 21 ms | 36.8% · 79 ms | 15.0% · 124 ms |
@@ -307,25 +308,34 @@ Banking77, catalogue trained with `kv.train` on the public training split:
 <!-- table:training -->
 | Banking77, 300 test messages | Untrained catalogue | Trained catalogue |
 |---|---|---|
-| Catalogue alone (no LLM call) | 65.7% · 15 ms | 93.0% · 15 ms |
-| Catalogue top-5, then LLM | 62.3% · 84 ms | 60.7% · 84 ms |
-| Catalogue top-50, then LLM | 55.3% · 126 ms | 52.7% · 126 ms |
+| Catalogue alone (no LLM call) | 65.7% · 15 ms | 93.0% · 16 ms |
+| Catalogue top-5, then LLM | 61.7% · 84 ms | 61.0% · 84 ms |
+| Catalogue top-50, then LLM | 56.0% · 126 ms | 53.3% · 125 ms |
 | Validation accuracy during training | 71.2% | 92.4% |
-| Cost of training | – | 10,003 examples, 97 s in total (20 s of training, the rest is embedding the examples) |
+| Cost of training | – | 10,003 examples, 94 s in total (18 s of training, the rest is embedding the examples) |
 <!-- /table:training -->
 
 After training the catalogue is more accurate alone than followed by the LLM, and it answers in the time of one
 embedding. The same catalogue configuration measured by two programs (`baselines.py` and `train_bench.py`) gives
-56.3% and 55.3% for "top-50, then LLM": 3 messages out of 300.
+56.3% and 56.0% for "top-50, then LLM": 1 message out of 300.
 
 A catalogue trained with the examples of half of the intents only:
 
 <!-- table:heldout -->
-| Intent of the test message | Untrained catalogue | Catalogue trained on half of the intents |
-|---|---|---|
-| Had training examples (39 intents) | 66.0% | 95.4% |
-| Had no training example (38 intents) | 65.3% | 21.1% |
+| Intent of the test message | Untrained catalogue | Trained on half of the intents, no fallback | Trained on half of the intents, fallback (default) | Decisions that fell back to the LLM |
+|---|---|---|---|---|
+| Had training examples (39 intents) | 66.0% · 15 ms | 95.4% · 15 ms | 86.3% · 16 ms | 15.0% |
+| Had no training example (38 intents) | 65.3% · 15 ms | 21.1% · 15 ms | 59.9% · 83 ms | 63.9% |
 <!-- /table:heldout -->
+
+Without the fallback the head trained on half of the intents gets the other half wrong: it picks an intent it
+was trained on, with high confidence, so the confidence cannot flag these errors. The fallback uses another signal:
+the head records which options had examples, and when the untrained catalogue prefers an option without examples
+and disagrees with the trained one, the LLM chooses among the 5 best options of each catalogue. On the intents
+without examples this raises the accuracy from 21.1% to 59.9%; on the intents with examples it costs 9 points,
+because the LLM re-chooses some cases the trained catalogue had right. Over all 300 messages: 59.0% without the
+fallback, 73.3% with it, 65.7% for the untrained catalogue. A head trained on every option never falls back (93.0%
+in 16 ms, as above). `fallback=0` switches it off.
 
 ### Training the catalogue on typed questions
 
@@ -424,7 +434,8 @@ which moves probabilities by up to a few hundredths on near ties. On the hybrid 
   full recomputation by the same amount; confident answers do not move.
 - `full=True` (probability of every option) is cheap on attention-only models and slow on hybrid models.
 - Accuracy on open vocabularies falls as the list grows (see the tables); the tool does not hide it.
-- A trained head helps the options it has seen and hurts the others.
+- A head trained on some of the options hurts the others; the fallback recovers part of the loss and costs
+  some accuracy on the trained options (see the results).
 
 ## Credits and prior work
 

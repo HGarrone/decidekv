@@ -386,6 +386,11 @@ class KV:
         `head` is a trained catalogue (the object returned by `KV.train`, or the path of its .npz file). With a head
         the catalogue is used at every size and, unless `k` is given, it decides alone (k=1, no LLM call).
 
+        A head trained with examples of only some options gets the others wrong. With `fallback=5` (the default)
+        the LLM chooses among the 5 best options of the trained and of the untrained catalogue whenever the
+        untrained catalogue prefers an option without examples; `fallback=0` switches it off. A head trained on
+        every option never falls back.
+
         >>> kv.index(intents, noun="intent", state_label="Customer message",
         ...          question="Which intent does this customer message express?")
         """

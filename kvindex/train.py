@@ -162,7 +162,9 @@ def fit_head(states, options, ids, rank: int = 64, epochs: int = 40, batch: int 
         "best_epoch": int(best_epoch),
         "train_s": float(time.perf_counter() - t0),
         "train_examples": int(len(tr)),
-        "val_examples": int(len(val))
+        "val_examples": int(len(val)),
+        "n_options": int(m),
+        "trained_options": sorted(int(i) for i in set(ids.tolist()))
     }
     return Head(best["us"], best["vs"], best["uo"], best["vo"], report)
 

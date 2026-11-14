@@ -39,9 +39,8 @@ class Catalog:
     def __init__(self, texts, encoder, vectors=None, head=None, query_template: str = QUERY_TEMPLATE):
         self.encoder, self.query_template = encoder, query_template
         self.head = head
-        self.vec = np.asarray(vectors if vectors is not None else encoder(list(texts)), dtype=np.float32)
-        if self.head is not None:
-            self.vec = self.head.options(self.vec)
+        self.raw = np.asarray(vectors if vectors is not None else encoder(list(texts)), dtype=np.float32)
+        self.vec = self.head.options(self.raw) if self.head is not None else self.raw
 
     @staticmethod
     def cached(texts, encoder, folder: str):
@@ -57,19 +56,25 @@ class Catalog:
         return vec
 
     def query(self, state, question: str) -> np.ndarray:
-        v = self.encoder([self.query_template.format(question=question, state=render_state(state))])[0]
+        v = self.query_raw(state, question)
         if self.head is not None:
             return self.head.state(v[None])[0]
         return v
 
-    def top(self, v: np.ndarray, k: int, banned: set[int] = frozenset()) -> list[int]:
-        s = self.vec @ v
+    def top(self, v: np.ndarray, k: int, banned: set[int] = frozenset(), raw: bool = False) -> list[int]:
+        """Positions of the k options closest to the query vector v (raw=True: untrained option vectors)."""
+        s = (self.raw if raw else self.vec) @ v
         if banned:
             s = s.copy()
             s[list(banned)] = -np.inf
         k = min(k, len(s) - len(banned))
         idx = np.argpartition(-s, k - 1)[:k]
         return [int(i) for i in idx[np.argsort(-s[idx])]]
+
+    def query_raw(self, state, question: str) -> np.ndarray:
+        """Embedding of the query, without the head."""
+        v = self.encoder([self.query_template.format(question=question, state=render_state(state))])[0]
+        return v
 
 
 class TopKIndex:
@@ -78,14 +83,17 @@ class TopKIndex:
 
     def __init__(self, kv, options, encoder, k: int = 50, vectors=None, head=None, task: str | None = None,
                  question: str | None = None, noun: str = "option", state_label: str = "State",
-                 query_template: str | None = None):
+                 query_template: str | None = None, fallback: int = 5):
         self.kv, self.k = kv, k
         self.keys, self.descs, texts = parse_options(options)
         self.n = len(self.keys)
         self.pos = {name: i for i, name in enumerate(self.keys)}
         self.prompt = dict(task=task, question=question, noun=noun, state_label=state_label)
         self.catalog = Catalog(texts, encoder, vectors, head, query_template or QUERY_TEMPLATE)
-        self.last_candidates = []
+        self.fallback = fallback
+        self.fallbacks = 0
+        trained = head.report.get("trained_options") if head is not None else None
+        self.untrained = set(range(self.n)) - set(trained) if trained is not None else set()
 
     def choose(self, state, instructions=None, usage=None, exclude=()) -> ChoiceAnswer:
         banned = set(self.pos[e] for e in exclude if e in self.pos)
@@ -93,7 +101,16 @@ class TopKIndex:
         k = min(self.k, len(self.keys) - len(banned))
         if k == 0:
             raise ValueError("every option is excluded")
-        top = self.catalog.top(self.catalog.query(state, q), k, banned)
+        v_raw = self.catalog.query_raw(state, q)
+        head = self.catalog.head
+        v = head.state(v_raw[None])[0] if head is not None else v_raw
+        top = self.catalog.top(v, k, banned)
+        if k == 1 and self.fallback and self.untrained:
+            raw_top = self.catalog.top(v_raw, self.fallback, banned, raw=True)
+            if raw_top[0] in self.untrained and raw_top[0] != top[0]:
+                self.fallbacks += 1
+                near = self.catalog.top(v, self.fallback, banned)
+                top = near + [i for i in raw_top if i not in near]
         self.last_candidates = [self.keys[i] for i in top]
         if len(self.last_candidates) == 1:
             return ChoiceAnswer(choice=self.last_candidates[0], probabilities={}, confidence=1.0)

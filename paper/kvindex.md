@@ -16,7 +16,7 @@ The library does not introduce a new mechanism. It assembles published technique
 
 On one consumer GPU and one 8B model, the untrained tool is ahead of the OpenJev architecture on three tasks out of
 four, runs on lists where OpenJev does not, and is far ahead of CLM-8B as released. With the catalogue trained on
-Banking77 it reaches 93.0% in 15 ms per decision, above CLM-8B with heads fine-tuned on the same task (84.3%). On
+Banking77 it reaches 93.0% in 16 ms per decision, above CLM-8B with heads fine-tuned on the same task (84.3%). On
 Typed Decisions the catalogue trained on the typed questions reaches 75.6% with no LLM call (CLM-8B fine-tuned:
 71.0%), and trained on the answers of an LLM, without any human label, it keeps about the accuracy of its teacher.
 
@@ -101,7 +101,7 @@ together.
 | Method | Training | Banking77 (77 intents) | WordNet (200 words) | Typed Decisions | Aim game (games won, time per shot) |
 |---|---|---|---|---|---|
 | **kvindex** | none | 60.7% · 65 ms | 70.7% · 38 ms | 56.9% · 48 ms | 95.0% · 159 ms |
-| **kvindex, trained catalogue** | on the task | 93.0% · 15 ms | – | 75.6% · 57 ms | – |
+| **kvindex, trained catalogue** | on the task | 93.0% · 16 ms | – | 75.6% · 57 ms | – |
 | OpenJev architecture, shared prompt | none | 39.7% · 90 ms | 63.3% · 132 ms | 59.3% · 67 ms | 25.0% · 423 ms |
 | OpenJev library, own prompt, Ollama | none | 44.0% · 117 ms | 22.7% · 164 ms | 58.1% · 62 ms | 25.0% · 469 ms |
 | CLM-8B as released | none | 4.3% · 35 ms | 12.7% · 21 ms | 36.8% · 79 ms | 15.0% · 124 ms |
@@ -170,17 +170,17 @@ In the right panel the two CLM-8B lines coincide: the fine-tuned heads cost the 
 <!-- table:training -->
 | Banking77, 300 test messages | Untrained catalogue | Trained catalogue |
 |---|---|---|
-| Catalogue alone (no LLM call) | 65.7% · 15 ms | 93.0% · 15 ms |
-| Catalogue top-5, then LLM | 62.3% · 84 ms | 60.7% · 84 ms |
-| Catalogue top-50, then LLM | 55.3% · 126 ms | 52.7% · 126 ms |
+| Catalogue alone (no LLM call) | 65.7% · 15 ms | 93.0% · 16 ms |
+| Catalogue top-5, then LLM | 61.7% · 84 ms | 61.0% · 84 ms |
+| Catalogue top-50, then LLM | 56.0% · 126 ms | 53.3% · 125 ms |
 | Validation accuracy during training | 71.2% | 92.4% |
-| Cost of training | – | 10,003 examples, 97 s in total (20 s of training, the rest is embedding the examples) |
+| Cost of training | – | 10,003 examples, 94 s in total (18 s of training, the rest is embedding the examples) |
 <!-- /table:training -->
 
 Three facts follow from the table.
 
 1. Training raises the accuracy of the catalogue from 65.7% to 93.0% on the test messages.
-2. It does not change the time per decision: 15 ms, the cost of one embedding.
+2. It does not change the time per decision: 15 to 16 ms, the cost of one embedding.
 3. After training, the catalogue alone is more accurate than the catalogue followed by the LLM. The LLM, which is
    not trained on the task, lowers the result when it re-chooses among good candidates.
 
@@ -189,14 +189,21 @@ For this reason an index built with a trained catalogue answers without calling 
 A catalogue trained with the examples of half of the intents only:
 
 <!-- table:heldout -->
-| Intent of the test message | Untrained catalogue | Catalogue trained on half of the intents |
-|---|---|---|
-| Had training examples (39 intents) | 66.0% | 95.4% |
-| Had no training example (38 intents) | 65.3% | 21.1% |
+| Intent of the test message | Untrained catalogue | Trained on half of the intents, no fallback | Trained on half of the intents, fallback (default) | Decisions that fell back to the LLM |
+|---|---|---|---|---|
+| Had training examples (39 intents) | 66.0% · 15 ms | 95.4% · 15 ms | 86.3% · 16 ms | 15.0% |
+| Had no training example (38 intents) | 65.3% · 15 ms | 21.1% · 15 ms | 59.9% · 83 ms | 63.9% |
 <!-- /table:heldout -->
 
-The training helps the options it has seen and harms the others. A trained catalogue should be used when the
-examples cover the options.
+Without the fallback the head trained on half of the intents gets the other half wrong: it picks an intent it
+was trained on, with high confidence, so the confidence cannot flag these errors. The fallback uses another signal:
+the head records which options had examples, and when the untrained catalogue prefers an option without examples
+and disagrees with the trained one, the LLM chooses among the 5 best options of each catalogue. On the intents
+without examples this raises the accuracy from 21.1% to 59.9%; on the intents with examples it costs 9 points,
+because the LLM re-chooses some cases the trained catalogue had right. Over all 300 messages: 59.0% without the
+fallback, 73.3% with it, 65.7% for the untrained catalogue. A head trained on every option never falls back (93.0%
+in 16 ms, as above). `fallback=0` switches it off.
+A trained catalogue works best when the examples cover the options.
 
 ### Training the catalogue on typed questions
 

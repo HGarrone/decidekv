@@ -430,3 +430,32 @@ def test_decide_unknown_order():
     kv = make_kv()
     with pytest.raises(ValueError):
         kv.decide("x", {"a": Noul(instructions="q")}, order="sideways")
+
+
+def test_fallback_for_options_without_examples():
+    kv = make_kv(embed=FakeEncoder())
+    seen = WORDS[:4]
+    examples = [(f"{w} {w} {w}", w) for w in seen for _ in range(40)]
+    head = kv.train(WORDS, examples, epochs=60, batch=32, lr=0.01)
+    assert head.report["trained_options"] == [0, 1, 2, 3]
+    idx = kv.index(WORDS, head=head)
+    for w in WORDS:
+        assert idx.choose(f"{w} {w} {w}").choice == w
+    assert idx.fallbacks == len(kv.client.prompts)
+    off = kv.index(WORDS, head=head, fallback=0)
+    n = len(kv.client.prompts)
+    for w in WORDS:
+        off.choose(f"{w} {w} {w}")
+    assert len(kv.client.prompts) == n
+    assert off.fallbacks == 0
+
+
+def test_no_fallback_when_every_option_was_trained():
+    kv = make_kv(embed=FakeEncoder())
+    examples = [(f"{w} {w} {w}", w) for w in WORDS for _ in range(20)]
+    head = kv.train(WORDS, examples, epochs=40, batch=32, lr=0.01)
+    idx = kv.index(WORDS, head=head)
+    for w in WORDS:
+        idx.choose(f"{w} {w}")
+    assert idx.fallbacks == 0
+    assert kv.client.prompts == []

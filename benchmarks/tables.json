@@ -232,18 +232,24 @@
       "header": [
         "Intent of the test message",
         "Untrained catalogue",
-        "Catalogue trained on half of the intents"
+        "Trained on half of the intents, no fallback",
+        "Trained on half of the intents, fallback (default)",
+        "Decisions that fell back to the LLM"
       ],
       "rows": [
         [
           "Had training examples (39 intents)",
-          "@train#banking77/half-seen|acc",
-          "@train#banking77/half-seen-trained|acc"
+          "@train#banking77/half-seen|acc_ms",
+          "@train#banking77/half-seen-trained-nofallback|acc_ms",
+          "@train#banking77/half-seen-trained|acc_ms",
+          "@train#banking77/half-seen-trained|pct:fallback_rate"
         ],
         [
           "Had no training example (38 intents)",
-          "@train#banking77/half-unseen|acc",
-          "@train#banking77/half-unseen-trained|acc"
+          "@train#banking77/half-unseen|acc_ms",
+          "@train#banking77/half-unseen-trained-nofallback|acc_ms",
+          "@train#banking77/half-unseen-trained|acc_ms",
+          "@train#banking77/half-unseen-trained|pct:fallback_rate"
         ]
       ]
     },
