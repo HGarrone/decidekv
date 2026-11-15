@@ -53,6 +53,32 @@ reported. Only this projection is trained. With a trained catalogue the closest 
 
 `KV.index` chooses between the first two regimes from the size of the list; the threshold is a parameter.
 
+The flow of one decision, with the optional trained catalogue and its fallback:
+
+```mermaid
+flowchart TD
+    S["State<br/>(a message, a definition, a game position...)"] --> Q{"How many options?"}
+    Q -->|"up to 3,000"| L["<b>Cached list</b><br/>instructions + every option, written once<br/>into the KV cache (resident prefix)"]
+    L --> C1["Each decision computes only<br/>the new tokens: state + question"]
+    Q -->|"more"| E["<b>Embedding catalogue</b><br/>one vector per option"]
+    E --> T["The 50 options closest to the state<br/>go into the prompt"]
+    T --> C2["The LLM reads state + 50 options"]
+    C1 --> D["<b>Constrained decoding</b><br/>token trie of the option names:<br/>the answer is always one of the options"]
+    C2 --> D
+    D --> A["Answer, probability, confidence<br/>(full=True: the probability of every option)"]
+    S -.->|"with a trained head"| H["<b>Trained catalogue</b> (optional)<br/>low-rank projection of the embeddings,<br/>numpy, minutes; the LLM is never trained"]
+    H --> K{"Does the untrained catalogue prefer<br/>an option that had no example?"}
+    K -->|"no"| A2["The catalogue answers alone:<br/>no LLM call, about 15 ms"]
+    K -->|"yes (fallback)"| T2["Top-5 of both catalogues<br/>to the LLM"]
+    T2 --> D
+    classDef cached fill:#d3f0e4,stroke:#1baf7a,color:#0b0b0b
+    classDef computed fill:#d6e6f8,stroke:#2a78d6,color:#0b0b0b
+    classDef trained fill:#fbdccd,stroke:#eb6834,color:#0b0b0b
+    class L,E cached
+    class C1,C2,D,T computed
+    class H,K,A2,T2 trained
+```
+
 ## Prior work
 
 Every mechanism above is published work.

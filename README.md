@@ -220,13 +220,64 @@ Catalog` (at 30,000 options this saves about 30 seconds per start).
 
 ## How it works
 
-```
-up to flat_max options                         above flat_max, or with a trained head
+The flow of one decision:
 
-[ instructions + all options ]  cached once    embedding catalogue -> the k closest options
-[ state ]                       computed       [ instructions + k options ] [ state ] [ question ]
-[ question ] -> answer          constrained    -> answer, constrained to the k options
+```mermaid
+flowchart TD
+    S["State<br/>(a message, a definition, a game position...)"] --> Q{"How many options?"}
+    Q -->|"up to 3,000"| L["<b>Cached list</b><br/>instructions + every option, written once<br/>into the KV cache (resident prefix)"]
+    L --> C1["Each decision computes only<br/>the new tokens: state + question"]
+    Q -->|"more"| E["<b>Embedding catalogue</b><br/>one vector per option"]
+    E --> T["The 50 options closest to the state<br/>go into the prompt"]
+    T --> C2["The LLM reads state + 50 options"]
+    C1 --> D["<b>Constrained decoding</b><br/>token trie of the option names:<br/>the answer is always one of the options"]
+    C2 --> D
+    D --> A["Answer, probability, confidence<br/>(full=True: the probability of every option)"]
+    S -.->|"with a trained head"| H["<b>Trained catalogue</b> (optional)<br/>low-rank projection of the embeddings,<br/>numpy, minutes; the LLM is never trained"]
+    H --> K{"Does the untrained catalogue prefer<br/>an option that had no example?"}
+    K -->|"no"| A2["The catalogue answers alone:<br/>no LLM call, about 15 ms"]
+    K -->|"yes (fallback)"| T2["Top-5 of both catalogues<br/>to the LLM"]
+    T2 --> D
+    classDef cached fill:#d3f0e4,stroke:#1baf7a,color:#0b0b0b
+    classDef computed fill:#d6e6f8,stroke:#2a78d6,color:#0b0b0b
+    classDef trained fill:#fbdccd,stroke:#eb6834,color:#0b0b0b
+    class L,E cached
+    class C1,C2,D,T computed
+    class H,K,A2,T2 trained
 ```
+
+The same request in three designs:
+
+```mermaid
+flowchart LR
+    subgraph OJ["OpenJev architecture"]
+        direction TB
+        o1["state"] --> o2["options after it<br/>(at most 255)"] --> o3["logit of the first token<br/>of each option"]
+        o4["Every call recomputes<br/>state and options.<br/>No training."]
+    end
+    subgraph CL["CLM-8B"]
+        direction TB
+        c1["state"] --> c2["contrastive heads<br/>trained for one model (Qwen3-8B)"] --> c3["score of each option"]
+        c4["Needs fine-tuning on the task;<br/>the heads do not transfer<br/>to another model."]
+    end
+    subgraph KV["kvindex"]
+        direction TB
+        k1["options first: cached once<br/>(any number: catalogue above 3,000)"] --> k2["state: only the new tokens"] --> k3["constrained decoding:<br/>always one of the options"]
+        k4["Any GGUF model of Ollama,<br/>hybrid models included.<br/>Optional training of the catalogue only,<br/>also without labels (the LLM teaches it)."]
+    end
+    classDef oj fill:#efeee9,stroke:#8d8c86,color:#0b0b0b
+    classDef cl fill:#efeee9,stroke:#8d8c86,color:#0b0b0b
+    classDef kv fill:#d3f0e4,stroke:#1baf7a,color:#0b0b0b
+    class o1,o2,o3,o4 oj
+    class c1,c2,c3,c4 cl
+    class k1,k2,k3,k4 kv
+```
+
+**Why it matters.** The same model, prompt blocks and machine give, per decision: Banking77 60.7% in 65 ms for
+kvindex against 39.7% in 90 ms for the OpenJev architecture (Qwen3-8B), 73.0% in 161 ms against 45.7% in 409 ms on
+a hybrid 27B; kvindex keeps working at 30,000 options where OpenJev stops at 255; with the catalogue trained on the
+task it reaches 93.0% in 15 ms on Banking77 and 75.6% with no LLM call on Typed Decisions, above CLM-8B with heads
+fine-tuned on the same tasks (84.3% and 71.0%), on any model instead of one. The tables below have every number.
 
 In a causal LLM the keys and values of a token depend only on the tokens before it. With the options first and
 unchanged, their KV cache is computed once and reused exactly by every later call (the cells are shared by the
