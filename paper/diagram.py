@@ -148,9 +148,9 @@ def draw_compact(name, dpi):
     fig, ax = canvas(10, 4.9, 100, 49, dpi)
     rows = [
         (40.5, BLUE, "#f3f6fa", "UP TO 3,000 OPTIONS: the list is a resident prefix",
-         [("Instructions + options", "computed once per list,\nkept in its own sequence", CACHED),
-          ("State + question", "only these tokens are\ncomputed at every decision", COMPUTED),
-          ("Constrained answer", "always one option;\nprobabilities of every option", NEUTRAL)]),
+         [("Instructions + options + question", "computed once per list,\nkept in its own sequence", CACHED),
+          ("State", "the only tokens computed\nat every decision", COMPUTED),
+          ("Constrained answer", "always one option; optional cache\nfor near-duplicate messages", NEUTRAL)]),
         (24.5, GREEN, "#f2f8f4", "LARGER LISTS: an embedding catalogue picks the candidates",
          [("Option vectors", "one embedding per option,\ncomputed once", CACHED),
           ("50 nearest options", "to the embedded state\n(trained head: answers alone)", TRAINED),

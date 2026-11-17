@@ -37,7 +37,9 @@ task--model pairs we could compare (Banking77 with Qwen3-8B: 63.0\% in 64\ms{} a
 speed comes from organising the work around the KV cache: option lists stay resident in the cache across states, and
 the questions about one state share it through a prefix tree evaluated in one forward pass (a turn of 15 questions on
 a 27B hybrid model: from 11.2\,s to 1.4\,s with a long state). We report the weaknesses too: where it is less accurate,
-how probabilities depend on batching in llama.cpp, and what we tried that did not work.
+how probabilities depend on batching in llama.cpp, and what we tried that did not work. An optional semantic cache
+reuses the LLM's answers for near-duplicate messages, and we outline a sequel in which a time-series forecaster passes
+the predicted state of a moving target to \dkv.
 \end{abstract}
 
 \section{Introduction}
@@ -110,8 +112,9 @@ differences in Section~\ref{sec:related}.
 \begin{figure}[t]
 \centering
 \includegraphics[width=\linewidth]{fig_overview.png}
-\caption{Overview of \dkv. Top: up to 3{,}000 options the instructions and the options are a resident prefix, computed
-once, and every decision computes only the state and the question. Middle: for larger lists an embedding catalogue
+\caption{Overview of \dkv. Top: up to 3{,}000 options the instructions, the options and the question are a resident
+prefix, computed once, and every decision computes only the state; an optional semantic cache reuses answers for
+near-duplicate messages. Middle: for larger lists an embedding catalogue
 picks 50 candidates for the LLM (with a trained head, the catalogue answers alone). Bottom: many questions about one
 state are answered as a prefix tree in one forward pass; a trained head can answer first and pass only uncertain or
 unfamiliar questions to the LLM.}\label{fig:overview}
@@ -564,6 +567,23 @@ similar states. Predict-then-act designs exist in robotics, where a small world 
 for a frozen vision-language-action model and enables catching moving objects~\citep{ahead}, and LLM agents are
 increasingly combined with time-series models~\citep{tsagents}; we are not aware of work that pairs a forecaster with
 typed, cache-resident LLM decisions under a latency budget.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[
+  box/.style={draw, rounded corners=2pt, align=center, font=\footnotesize, inner sep=4pt, minimum height=1.05cm},
+  arr/.style={-{Latex[length=2mm]}, thick, gray!70!black}]
+\node[box, fill=gray!10] (obs) at (0, 0) {observations\\over time\\\scriptsize(positions, load)};
+\node[box, fill=orange!15] (fc) at (3.7, 0) {time-series\\forecaster\\\scriptsize(e.g. a foundation model)};
+\node[box, fill=green!12] (st) at (7.2, 0) {predicted state\\\scriptsize``where the target\\\scriptsize will be at $t+\Delta$''};
+\node[box, fill=blue!10] (dk) at (10.5, 0) {\dkv\\\scriptsize resident options,\\\scriptsize prefix tree};
+\node[box, fill=gray!10] (act) at (13.3, 0) {decision\\\scriptsize(aim, route,\\\scriptsize dispatch)};
+\draw[arr] (obs) -- (fc); \draw[arr] (fc) -- (st); \draw[arr] (st) -- (dk); \draw[arr] (dk) -- (act);
+\end{tikzpicture}
+\caption{The planned sequel: a forecaster turns the recent history into the state the target will have when the
+decision takes effect, and \dkv{} decides on that predicted state with the same resident options and prefix tree.
+$\Delta$ covers the latency of the decision and of its execution.}\label{fig:forecast}
+\end{figure}
 
 \section{Conclusion}
 \dkv{} is a free tool for a frequent task: fast, constrained, typed decisions with a local LLM. It is ready to use
