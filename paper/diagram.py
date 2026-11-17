@@ -143,9 +143,39 @@ def draw(name, dpi):
     plt.close(fig)
 
 
+def draw_compact(name, dpi):
+    """The same ideas in three rows, one per regime, sized for one column of the paper."""
+    fig, ax = canvas(10, 4.9, 100, 49, dpi)
+    rows = [
+        (40.5, BLUE, "#f3f6fa", "UP TO 3,000 OPTIONS: the list is a resident prefix",
+         [("Instructions + options", "computed once per list,\nkept in its own sequence", CACHED),
+          ("State + question", "only these tokens are\ncomputed at every decision", COMPUTED),
+          ("Constrained answer", "always one option;\nprobabilities of every option", NEUTRAL)]),
+        (24.5, GREEN, "#f2f8f4", "LARGER LISTS: an embedding catalogue picks the candidates",
+         [("Option vectors", "one embedding per option,\ncomputed once", CACHED),
+          ("50 nearest options", "to the embedded state\n(trained head: answers alone)", TRAINED),
+          ("The LLM chooses", "short prompt with the 50,\nconstrained answer", COMPUTED)]),
+        (8.5, ORANGE, "#fbf4ee", "MANY QUESTIONS ABOUT ONE STATE: a prefix tree, one forward pass",
+         [("State", "computed once for\nall the questions", CACHED),
+          ("Shared option blocks", "instructions + options,\nonce per list", COMPUTED),
+          ("All the questions", "in parallel, one llama_decode;\na trained head may answer first", COMPUTED)]),
+    ]
+    for y, color, band, title, boxes in rows:
+        ax.add_patch(Rectangle((1, y - 7.5), 98, 15.5, fc=band, ec="none", zorder=0))
+        ax.text(2.5, y + 5.6, title, fontsize=8.2, weight="bold", color=color, ha="left", va="center", zorder=1)
+        xs = [17.5, 50, 82.5]
+        for x, (t, b, fill) in zip(xs, boxes):
+            box(ax, x, y - 1.6, 29, 9.2, t, b, fill=fill, fs=7.0)
+        arrow(ax, (32.3, y - 1.6), (35.2, y - 1.6))
+        arrow(ax, (64.8, y - 1.6), (67.7, y - 1.6))
+    fig.savefig(os.path.join(OUT, name), facecolor=SURF, bbox_inches="tight", pad_inches=0.05, dpi=dpi)
+    plt.close(fig)
+
+
 def main():
     draw("fig_mechanism.png", 200)
     draw("decidekv_diagram_HD.png", 400)
+    draw_compact("fig_overview.png", 300)
 
 
 if __name__ == "__main__":

@@ -23,3 +23,5 @@ paper/arxiv/*.fls
 paper/arxiv/*.fdb_latexmk
 paper/arxiv/*.blg
 paper/arxiv/*.zip
+paper/arxiv/main_new.*
+paper/arxiv/build*.log

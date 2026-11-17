@@ -109,15 +109,66 @@ differences in Section~\ref{sec:related}.
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=0.92\linewidth]{fig_mechanism.png}
-\caption{Overview of \dkv. Top: up to 3{,}000 options the list is a resident prefix and every decision computes only
-the new tokens. Middle: for larger lists an embedding catalogue picks 50 candidates for the LLM. Bottom: many
-questions about one state are answered as a prefix tree in one forward pass; with a trained head, the LLM is called
-only for answers outside the head's field (fallback) or below a confidence threshold (cascade).}\label{fig:overview}
+\includegraphics[width=\linewidth]{fig_overview.png}
+\caption{Overview of \dkv. Top: up to 3{,}000 options the instructions and the options are a resident prefix, computed
+once, and every decision computes only the state and the question. Middle: for larger lists an embedding catalogue
+picks 50 candidates for the LLM (with a trained head, the catalogue answers alone). Bottom: many questions about one
+state are answered as a prefix tree in one forward pass; a trained head can answer first and pass only uncertain or
+unfamiliar questions to the LLM.}\label{fig:overview}
 \end{figure}
 
+\subsection{Background: the KV cache}
+An LLM reads its prompt as a sequence of tokens. For every token and every layer it computes a key vector and a value
+vector; later tokens attend to the keys and values of all earlier tokens. These vectors form the \emph{KV cache}.
+Reading the prompt (the \emph{prefill}) is the expensive part of a short decision: producing a one-token answer
+afterwards costs little. In a causal model the keys and values of a token depend only on the tokens before it, so two
+prompts that start with the same text have the same cache for that text, and it can be computed once and reused.
+Serving systems use this to share common prefixes between requests~\citep{vllm,sglang}; \dkv{} builds the whole
+decision around it: what is constant goes first and is kept, what changes goes after it.
+
 \subsection{Typed decisions}
-A decision is a state $s$ (any text or structured object) and a question $q$ with an option list $O_q$. A
+\paragraph{A worked example.} A support application receives the message \emph{``This is the third time I write! My
+card was stolen yesterday and nobody answers.''} and asks three questions about it: which request it is (a
+\texttt{Choice} among \emph{lost or stolen card}, \emph{refund}, \emph{card arrival}), how upset the customer is (a
+\texttt{Score} with levels \emph{calm}, \emph{annoyed}, \emph{furious}), and whether to escalate it to a human now (a
+\texttt{Noul}). Every decision is built from four pieces, which we name as in OpenJev~\citep{openjev}:
+\begin{center}\small
+\begin{tabular}{lll}
+\toprule
+Piece & In the example & Changes \\
+\midrule
+\emph{state} & the customer's message & at every message \\
+\emph{instructions} & a fixed sentence telling the model how to answer & never (depends on the question type) \\
+\emph{options} & the three requests; the three levels; \texttt{Yes}/\texttt{No} & never \\
+\emph{question} & ``How upset is the customer?'' & never, but differs between questions \\
+\bottomrule
+\end{tabular}
+\end{center}
+In a real application almost all the text is fixed and only the state changes. With the options first, the prompt
+of the \texttt{Score} question is (exact text, inside the model's chat template):
+\begin{center}
+\begin{minipage}{0.92\linewidth}\footnotesize
+\begin{verbatim}
+You are a decision engine. Answer the question about the state by choosing one
+level from the list of levels. Reply with the label of the level (the text before
+the colon), and nothing else.                                    <- instructions
+### Levels
+0: calm
+1: annoyed
+2: furious                                                       <- options
+### State
+customer: This is the third time I write! My card was stolen ... <- state
+### Question
+How upset is the customer? Answer with the level number.         <- question
+### Level                                                        <- answer head
+\end{verbatim}
+\end{minipage}
+\end{center}
+The model's next token is the answer; the probabilities of the tokens \texttt{0}, \texttt{1}, \texttt{2} give the
+probability of every level. The question is fixed but comes after the state, so its keys and values depend on the
+state and are recomputed at every decision (a dozen tokens); everything before the state is reused.
+
+\paragraph{Question types.} A decision is a state $s$ (any text or structured object) and a question $q$ with an option list $O_q$. A
 \texttt{Choice} picks one option; a \texttt{Score} picks one of $n$ levels described by criteria; a \texttt{Noul}
 answers yes or no. \texttt{Score} and \texttt{Noul} use single-token labels (\texttt{0}..\texttt{n-1}, \texttt{Yes}/\texttt{No})
 and return the probability of every level; a \texttt{Choice} is answered by decoding the option's name. Every prompt
@@ -157,29 +208,28 @@ long lists stay options-first and resident across states.
 \begin{figure}[t]
 \centering
 \begin{tikzpicture}[
-  node distance=6mm and 4mm,
-  box/.style={draw, rounded corners=2pt, align=center, font=\small, inner sep=3pt},
-  st/.style={box, fill=green!12},
-  bl/.style={box, fill=blue!10},
-  q/.style={box, fill=orange!15, font=\footnotesize},
+  box/.style={draw, rounded corners=2pt, align=center, inner sep=3pt},
+  st/.style={box, fill=green!12, font=\small},
+  bl/.style={box, fill=blue!10, font=\footnotesize},
+  q/.style={box, fill=orange!15, font=\scriptsize, minimum width=2.1cm},
   arr/.style={-{Latex[length=2mm]}, thick, gray!70!black}]
-\node[st] (s) {state (evaluated once, resident)};
-\node[bl, below left=8mm and 10mm of s] (b1) {instructions + \texttt{Score} levels};
-\node[bl, below right=8mm and 10mm of s] (b2) {instructions + \texttt{Noul} criteria};
-\node[q, below left=6mm and -14mm of b1] (q1) {question 1};
-\node[q, right=2mm of q1] (q2) {\dots};
-\node[q, right=2mm of q2] (q4) {question 4};
-\node[q, below left=6mm and -16mm of b2] (q5) {question 5};
-\node[q, right=2mm of q5] (q6) {\dots};
-\node[q, right=2mm of q6] (q15) {question 15};
+\node[st] (s) at (0, 0) {state: \emph{``This is the third time I write! My card was stolen\dots''}};
+\node[bl] (b1) at (-3.9, -1.5) {instructions + levels\\\texttt{0 calm / 1 annoyed / 2 furious}};
+\node[bl] (b2) at (3.6, -1.5) {instructions + answers\\\texttt{Yes / No}};
+\node[q] (q1) at (-5.2, -3.0) {How upset is\\the customer?};
+\node[q] (q2) at (-2.6, -3.0) {How urgent\\is it?};
+\node[q] (q3) at (1.2, -3.0) {Escalate to\\a human now?};
+\node[q] (q4) at (3.6, -3.0) {Is the card\\blocked?};
+\node[q] (q5) at (6.0, -3.0) {Is a refund\\requested?};
 \draw[arr] (s) -- (b1); \draw[arr] (s) -- (b2);
-\foreach \x in {q1,q2,q4} \draw[arr] (b1) -- (\x);
-\foreach \x in {q5,q6,q15} \draw[arr] (b2) -- (\x);
-\node[font=\footnotesize, gray!60!black, below=14mm of s] {one \texttt{llama\_decode} for all the questions};
+\foreach \x in {q1,q2} \draw[arr] (b1) -- (\x);
+\foreach \x in {q3,q4,q5} \draw[arr] (b2) -- (\x);
 \end{tikzpicture}
-\caption{Prefix tree for 15 questions about one state. Green: the state, computed once. Blue: option blocks shared by
-several questions, computed once each. Orange: the questions, evaluated in parallel sequences copied from their
-block.}\label{fig:tree}
+\caption{Prefix tree for five questions about one message (two \texttt{Score}, three \texttt{Noul}). Green: the
+state, computed once. Blue: the instructions and options of a list, computed once on a copy of the state and shared by
+the questions that use that list. Orange: the questions, each in its own sequence copied from its block, all evaluated
+in one \texttt{llama\_decode}; the last token of each sequence gives that question's answer. Without the tree the
+state would be read five times and each option block several times.}\label{fig:tree}
 \end{figure}
 
 \subsection{Large lists: the embedding catalogue}\label{sec:catalogue}
@@ -449,6 +499,18 @@ states, switches to an embedding catalogue for large lists, trains a catalogue (
 or targets hybrid recurrent models. We found these works after our implementation was written.
 \textbf{Contrastive training.} The catalogue objective is InfoNCE~\citep{infonce,clip} with soft targets, and its
 low-rank, identity-initialised correction follows LoRA~\citep{lora}.
+
+\section{Future work}
+Three directions follow from this work. \emph{Semantic caching}: when states are far more numerous than options,
+answers given to very similar states could be reused without any model call, as in semantic caches for LLM serving;
+the trained catalogue already generalises from the LLM's answers, and a direct comparison would show when a simple
+cache is enough. \emph{The question inside the constant block}: placing the question before the state would make
+instructions, options and question one constant prefix, at the price of asking the question before the model has read
+the state; its effect on accuracy has to be measured. \emph{Predict, then decide}: in our aim game the target does not
+move, so the state is the current grid. With moving targets (interception in robotics, pedestrians in driving,
+demand in logistics, load in energy networks) the decision should be taken on where the target \emph{will be}; a
+time-series forecaster could produce that predicted state for \dkv, and temporal patterns could also help to group
+similar states. Combining a forecaster and a decision model under a latency budget is a natural sequel.
 
 \section{Conclusion}
 \dkv{} is a free tool for a frequent task: fast, constrained, typed decisions with a local LLM. It is ready to use
