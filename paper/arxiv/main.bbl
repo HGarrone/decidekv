@@ -1,0 +1,122 @@
+\begin{thebibliography}{20}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Casanueva et~al.(2020)Casanueva, Tem{\v{c}}inas, Gerz, Henderson, and
+  Vuli{\'c}]{banking77}
+I{\~n}igo Casanueva, Tadas Tem{\v{c}}inas, Daniela Gerz, Matthew Henderson, and
+  Ivan Vuli{\'c}.
+\newblock Efficient intent detection with dual sentence encoders.
+\newblock In \emph{Proceedings of the 2nd Workshop on Natural Language
+  Processing for Conversational AI}, 2020.
+
+\bibitem[Chan et~al.(2024)Chan, Chen, Cheng, and Huang]{cag}
+Brian~J. Chan, Chao-Ting Chen, Jui-Hung Cheng, and Hen-Hsen Huang.
+\newblock Don't do {RAG}: When cache-augmented generation is all you need for
+  knowledge tasks.
+\newblock \emph{arXiv preprint arXiv:2412.15605}, 2024.
+
+\bibitem[{Contrastive-LM}(2026)]{clm}
+{Contrastive-LM}.
+\newblock {CLM-v0.1-8B}: contrastive language model heads for {Qwen3-8B}.
+\newblock \url{https://huggingface.co/Contrastive-LM/CLM-v0.1-8B}, 2026.
+
+\bibitem[De~Cao et~al.(2021)De~Cao, Izacard, Riedel, and Petroni]{genre}
+Nicola De~Cao, Gautier Izacard, Sebastian Riedel, and Fabio Petroni.
+\newblock Autoregressive entity retrieval.
+\newblock In \emph{International Conference on Learning Representations}, 2021.
+
+\bibitem[Gerganov and contributors(2023)]{llamacpp}
+Georgi Gerganov and contributors.
+\newblock llama.cpp: {LLM} inference in {C/C++}.
+\newblock \url{https://github.com/ggml-org/llama.cpp}, 2023.
+
+\bibitem[{GPT-AGI}(2026)]{openjev}
+{GPT-AGI}.
+\newblock {OpenJev}: open implementation of jev-style typed decisions.
+\newblock \url{https://github.com/GPT-AGI/OpenJev}, 2026.
+\newblock MIT licence.
+
+\bibitem[Hu et~al.(2022)]{lora}
+Edward~J. Hu et~al.
+\newblock {LoRA}: Low-rank adaptation of large language models.
+\newblock In \emph{International Conference on Learning Representations}, 2022.
+
+\bibitem[Juravsky et~al.(2024)]{hydragen}
+Jordan Juravsky et~al.
+\newblock Hydragen: High-throughput {LLM} inference with shared prefixes.
+\newblock \emph{arXiv preprint arXiv:2402.05099}, 2024.
+
+\bibitem[Kwon et~al.(2023)]{vllm}
+Woosuk Kwon et~al.
+\newblock Efficient memory management for large language model serving with
+  {PagedAttention}.
+\newblock In \emph{Proceedings of the 29th Symposium on Operating Systems
+  Principles}, 2023.
+
+\bibitem[Lee et~al.(2024)]{loft}
+Jinhyuk Lee et~al.
+\newblock Can long-context language models subsume retrieval, {RAG}, {SQL}, and
+  more?
+\newblock \emph{arXiv preprint arXiv:2406.13121}, 2024.
+
+\bibitem[Li and Wagle(2026)]{llmasjev}
+Yinheng Li and Justin Wagle.
+\newblock {LLM-as-Jev}: {LLMs} are already {Jev}-style decision models -- when
+  and how to fine-tune them.
+\newblock \emph{arXiv preprint arXiv:2610.02076}, 2026.
+
+\bibitem[{LocalLLaMA}(2026)]{typeddecisions}
+{LocalLLaMA}.
+\newblock Typed decisions dataset.
+\newblock \url{https://huggingface.co/datasets/LocalLLaMA/typed-decisions},
+  2026.
+\newblock Apache-2.0.
+
+\bibitem[Miller(1995)]{wordnet}
+George~A. Miller.
+\newblock {WordNet}: A lexical database for {English}.
+\newblock \emph{Communications of the ACM}, 38\penalty0 (11):\penalty0 39--41,
+  1995.
+
+\bibitem[{Qwen Team}(2025)]{qwen3}
+{Qwen Team}.
+\newblock {Qwen3} technical report.
+\newblock \emph{arXiv preprint arXiv:2505.09388}, 2025.
+
+\bibitem[Radford et~al.(2021)]{clip}
+Alec Radford et~al.
+\newblock Learning transferable visual models from natural language
+  supervision.
+\newblock In \emph{International Conference on Machine Learning}, 2021.
+
+\bibitem[van~den Oord et~al.(2018)van~den Oord, Li, and Vinyals]{infonce}
+Aaron van~den Oord, Yazhe Li, and Oriol Vinyals.
+\newblock Representation learning with contrastive predictive coding.
+\newblock \emph{arXiv preprint arXiv:1807.03748}, 2018.
+
+\bibitem[Wake and Wagle(2026)]{sharedkvbt}
+Naoki Wake and Justin Wagle.
+\newblock {SharedKV-BT}: Node-local typed decisions for behavior-tree agents.
+\newblock \emph{arXiv preprint arXiv:2610.07327}, 2026.
+
+\bibitem[Willard and Louf(2023)]{outlines}
+Brandon~T. Willard and R{\'e}mi Louf.
+\newblock Efficient guided generation for large language models.
+\newblock \emph{arXiv preprint arXiv:2307.09702}, 2023.
+
+\bibitem[Ye et~al.(2024)]{chunkattention}
+Lu~Ye et~al.
+\newblock {ChunkAttention}: Efficient self-attention with prefix-aware {KV}
+  cache and two-phase partition.
+\newblock \emph{arXiv preprint arXiv:2402.15220}, 2024.
+
+\bibitem[Zheng et~al.(2023)]{sglang}
+Lianmin Zheng et~al.
+\newblock {SGLang}: Efficient execution of structured language model programs.
+\newblock \emph{arXiv preprint arXiv:2312.07104}, 2023.
+
+\end{thebibliography}

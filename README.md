@@ -18,6 +18,7 @@ It speaks the `Choice` / `Score` / `Noul` question types of [OpenJev](https://gi
 any GGUF model that [Ollama](https://ollama.com) has downloaded (pure-attention and hybrid recurrent models alike),
 and works with any embedding model.
 
+A short paper describes the idea and the comparisons: **[paper/arxiv/main.pdf](paper/arxiv/main.pdf)**.
 The measurements and their protocol are written up in **[paper/decidekv.md](paper/decidekv.md)**; this README has the
 instructions and the same tables.
 

@@ -14,3 +14,12 @@ vendor/
 # working notes and superseded experiments (not part of the library)
 *.odt
 _archive/
+
+# LaTeX build files
+paper/arxiv/*.aux
+paper/arxiv/*.log
+paper/arxiv/*.out
+paper/arxiv/*.fls
+paper/arxiv/*.fdb_latexmk
+paper/arxiv/*.blg
+paper/arxiv/*.zip
