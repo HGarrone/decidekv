@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "kvindex"
+name = "decidekv"
 version = "0.1.0"
 description = "Fast decisions over many options with a local LLM: the option list lives in the KV cache, an embedding catalogue takes over for large lists, and the catalogue can be trained on your own examples."
 readme = "README.md"
@@ -21,7 +21,7 @@ bench = ["numpy>=1.24", "nltk>=3.8", "pandas>=2.0", "pyarrow>=14", "torch>=2.1",
 dev = ["pytest", "numpy>=1.24"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["kvindex"]
+packages = ["decidekv"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

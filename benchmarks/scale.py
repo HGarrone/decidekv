@@ -1,5 +1,5 @@
 """
-kvindex on growing option sets: WordNet reverse dictionary (definition -> word).
+decidekv on growing option sets: WordNet reverse dictionary (definition -> word).
 
 `KV.index` keeps the whole list in the KV cache up to `flat_max` options and switches to the embedding catalogue
 (top-k options in the prompt) above it. For every size: accuracy, median time per decision, time to build the index.
@@ -14,7 +14,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data import correct, load_json, save_json, wordnet  # noqa: E402
-from kvindex import KV  # noqa: E402
+from decidekv import KV  # noqa: E402
 
 PROMPT = dict(noun="word", state_label="Definition", question="Which word does this definition define?")
 

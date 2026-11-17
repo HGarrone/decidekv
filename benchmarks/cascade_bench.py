@@ -21,9 +21,9 @@ import warnings
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data import DATA, gold_key, load_json, save_json, to_text, typed_decisions  # noqa: E402
-from kvindex import KV  # noqa: E402
-from kvindex.llamacpp import LlamaCppEncoder  # noqa: E402
-from kvindex.primitives import answer_confidence  # noqa: E402
+from decidekv import KV  # noqa: E402
+from decidekv.llamacpp import LlamaCppEncoder  # noqa: E402
+from decidekv.primitives import answer_confidence  # noqa: E402
 from typed_train_bench import gold_examples, predict_key, teacher_file  # noqa: E402
 
 THRESHOLDS = [0.0, 0.3, 0.5, 0.7, 0.9, 1.01]

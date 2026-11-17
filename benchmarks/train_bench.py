@@ -16,8 +16,8 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data import banking77, banking77_train, correct, load_json, save_json  # noqa: E402
-from kvindex import KV  # noqa: E402
-from kvindex.catalog import TopKIndex  # noqa: E402
+from decidekv import KV  # noqa: E402
+from decidekv.catalog import TopKIndex  # noqa: E402
 
 PROMPT = dict(noun="intent", state_label="Customer message",
               question="Which intent does this customer message express?")

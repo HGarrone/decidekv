@@ -1,7 +1,7 @@
 """Integration test with a real GGUF model through the llama.cpp engine.
 
-Skipped unless the environment variable KVINDEX_TEST_MODEL names a model that Ollama has downloaded (for example
-`KVINDEX_TEST_MODEL=qwen3:0.6b pytest tests/test_engine.py`). It repeats the correctness checks of
+Skipped unless the environment variable DECIDEKV_TEST_MODEL names a model that Ollama has downloaded (for example
+`DECIDEKV_TEST_MODEL=qwen3:0.6b pytest tests/test_engine.py`). It repeats the correctness checks of
 benchmarks/checks.py: the logits computed through the cache equal the logits computed without it, on every
 architecture, and resident prefixes do not leak into each other.
 """
@@ -12,10 +12,10 @@ import sys
 import pytest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-MODEL = os.environ.get("KVINDEX_TEST_MODEL")
+MODEL = os.environ.get("DECIDEKV_TEST_MODEL")
 
 
-@pytest.mark.skipif(not MODEL, reason="set KVINDEX_TEST_MODEL to a GGUF model name to run the engine test")
+@pytest.mark.skipif(not MODEL, reason="set DECIDEKV_TEST_MODEL to a GGUF model name to run the engine test")
 def test_cache_matches_recomputation():
     result = subprocess.run([
         sys.executable,

@@ -1,10 +1,10 @@
-"""kvindex quickstart. Before running: `ollama pull qwen3:8b` (any pure-attention GGUF model works).
+"""decidekv quickstart. Before running: `ollama pull qwen3:8b` (any pure-attention GGUF model works).
 
     python examples/quickstart.py
 """
 import time
 
-from kvindex import KV, Choice, Noul, Score
+from decidekv import KV, Choice, Noul, Score
 
 
 def main():

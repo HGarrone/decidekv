@@ -1,5 +1,5 @@
 """
-kvindex core: options-first prompts whose KV cache acts as a reusable index.
+decidekv core: options-first prompts whose KV cache acts as a reusable index.
 
 Layout of every prompt:   [header + options]  [state]  [question]  -> answer
 The options block is byte-identical across calls, so the inference server keeps its KV cache and only
@@ -109,7 +109,7 @@ class Index:
 
     # ------------------------------------------------------------ prompt blocks
     # The same five blocks, with the same words, are used by every architecture; only their order and the way
-    # the answer is read change. kvindex uses: [intro + options] (cached) | [state] | [question + answer head].
+    # the answer is read change. decidekv uses: [intro + options] (cached) | [state] | [question + answer head].
     def intro(self) -> str:
         noun, plural = self.noun, self.wording["plural"].format(noun=self.noun)
         task = f" {self.task.strip()}" if self.task else ""
@@ -292,7 +292,7 @@ class KV:
                  embed: Any = None, flat_max: int = 3000, query_template: str | None = None, **backend_kw):
         """backend="llamacpp" (default: in-process llama.cpp; loads the GGUF that Ollama already downloaded, or a
         .gguf path; extra keyword arguments such as n_ctx and kv_type go to the backend) or "llamaserver" (a
-        llama.cpp `llama-server`: with `host` the URL of a running server, without it kvindex starts one on the
+        llama.cpp `llama-server`: with `host` the URL of a running server, without it decidekv starts one on the
         model; extra keyword arguments such as n_ctx, slots and port go to `LlamaServer.start`) or "ollama"
         (talks to the Ollama server).
 
@@ -364,7 +364,7 @@ class KV:
               **fit_kw) -> Any:
         """Train the embedding catalogue of `options` on `examples`, a list of (state, name of the right option).
 
-        Only the catalogue is trained (a small projection of the embedding vectors, see `kvindex.train`); the LLM is
+        Only the catalogue is trained (a small projection of the embedding vectors, see `decidekv.train`); the LLM is
         not. Use the same `question` as in `KV.index`. The returned head goes to `KV.index(options, head=head)`;
         `head.report` holds the validation accuracy before and after training. `out` saves it to a .npz file."""
         from .catalog import QUERY_TEMPLATE
@@ -467,7 +467,7 @@ class KV:
             llm = self.decide(state, {qid: questions[qid] for qid in low}, temperature=temperature, labels=labels,
                               full=full, order=order)
             answers = {qid: llm.answers.get(qid, a) for qid, a in cat.answers.items()}
-            return Response(model=f"kvindex/{self.model}/cascade", answers=answers, usage=llm.usage,
+            return Response(model=f"decidekv/{self.model}/cascade", answers=answers, usage=llm.usage,
                             latency_ms=round(cat.latency_ms + llm.latency_ms, 2), escalated=low)
         t0 = time.perf_counter()
         usage, answers = Usage(), {}
@@ -530,7 +530,7 @@ class KV:
             if held is not None:
                 self.client.release(held)
         return Response(
-            model=f"kvindex/{self.model}",
+            model=f"decidekv/{self.model}",
             answers=answers,
             usage=usage,
             latency_ms=round((time.perf_counter() - t0) * 1000, 2)
@@ -623,7 +623,7 @@ class KV:
                                            legend=dict(zip(keys, q.criteria)))
             else:
                 answers[qid] = NoulAnswer(noul=round(probs["Yes"], 6))
-        return Response(model=f"kvindex/{self.model}/catalogue", answers=answers, usage=Usage(),
+        return Response(model=f"decidekv/{self.model}/catalogue", answers=answers, usage=Usage(),
                         latency_ms=round((time.perf_counter() - t0) * 1000, 2))
 
     def question_index(self, q: Any, labels: bool = False, warm: bool = True) -> tuple[Any, Index, str]:
@@ -745,7 +745,7 @@ def answer_target(q: Any, keys: list[str], answer: Any) -> list[float]:
 
 
 def _coerce(q: Any):
-    """Accept kvindex dataclasses, OpenJev pydantic models or plain dicts."""
+    """Accept decidekv dataclasses, OpenJev pydantic models or plain dicts."""
     if isinstance(q, (Choice, Score, Noul)):
         return q
     d = q if isinstance(q, dict) else (q.model_dump() if hasattr(q, "model_dump") else vars(q))

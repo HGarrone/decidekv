@@ -34,7 +34,7 @@ class OllamaEncoder:
 
 class Catalog:
     """Option vectors and the query-to-options search. `head` is an optional trained projection
-    (see `kvindex.train`) applied to option and query vectors."""
+    (see `decidekv.train`) applied to option and query vectors."""
 
     def __init__(self, texts, encoder, vectors=None, head=None, query_template: str = QUERY_TEMPLATE):
         self.encoder, self.query_template = encoder, query_template

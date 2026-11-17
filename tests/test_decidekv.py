@@ -9,9 +9,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 
-from kvindex import KV, Choice, Noul, Score  # noqa: E402
-from kvindex.catalog import Catalog, TopKIndex  # noqa: E402
-from kvindex.core import Index, parse_options  # noqa: E402
+from decidekv import KV, Choice, Noul, Score  # noqa: E402
+from decidekv.catalog import Catalog, TopKIndex  # noqa: E402
+from decidekv.core import Index, parse_options  # noqa: E402
 
 
 class FakeClient:
@@ -379,7 +379,7 @@ def test_head_file_and_soft_answers(tmp_path):
 
 
 def test_answer_targets():
-    from kvindex.core import answer_target
+    from decidekv.core import answer_target
     noul = Noul(instructions="q")
     score = Score(instructions="q", criteria=["a", "b", "c"])
     assert answer_target(noul, ["Yes", "No"], True) == [1.0, 0.0]
@@ -464,7 +464,7 @@ def test_no_fallback_when_every_option_was_trained():
 
 def fake_server(slots=3, reply=None):
     """A LlamaServer that never opens a connection: `_post` records the request and returns `reply`."""
-    from kvindex.llamaserver import LlamaServer
+    from decidekv.llamaserver import LlamaServer
     srv = LlamaServer.__new__(LlamaServer)
     srv.host, srv.timeout, srv.process, srv.slots, srv.n_ctx = "http://fake", 1, None, slots, 4096
     srv._wrap, srv.scratch, srv.model_path = ("<u>", "</u>"), slots - 1, ""
@@ -480,7 +480,7 @@ def fake_server(slots=3, reply=None):
 
 
 def test_server_gbnf_literal():
-    from kvindex.llamaserver import _gbnf_literal
+    from decidekv.llamaserver import _gbnf_literal
     assert _gbnf_literal('say "hi"\\now') == '"say \\"hi\\"\\\\now"'
     assert _gbnf_literal("card arrival") == '"card arrival"'
 
@@ -536,7 +536,7 @@ def write_manifest(path, layers):
 
 
 def test_ollama_gguf_v1_and_v2_layouts(tmp_path, monkeypatch):
-    from kvindex.llamacpp import ollama_gguf
+    from decidekv.llamacpp import ollama_gguf
     monkeypatch.setenv("OLLAMA_MODELS", str(tmp_path))
     write_manifest(tmp_path / "manifests" / "registry.ollama.ai" / "library" / "qwen3" / "8b",
                   [{"mediaType": "application/vnd.ollama.image.model", "digest": "sha256:aaa"}])
@@ -552,7 +552,7 @@ def test_ollama_gguf_v1_and_v2_layouts(tmp_path, monkeypatch):
 
 
 def test_ollama_gguf_vision_model_skips_projector(tmp_path, monkeypatch):
-    from kvindex.llamacpp import ollama_gguf
+    from decidekv.llamacpp import ollama_gguf
     monkeypatch.setenv("OLLAMA_MODELS", str(tmp_path))
     write_manifest(tmp_path / "manifests-v2" / "ollama.com" / "library" / "vis" / "iq2_s",
                   [{"mediaType": "application/vnd.ollama.image.projector", "digest": "sha256:proj"},

@@ -1,6 +1,6 @@
-"""kvindex: fast decisions over many options with a local LLM.
+"""decidekv: fast decisions over many options with a local LLM.
 
-    from kvindex import KV, Choice, Score, Noul
+    from decidekv import KV, Choice, Score, Noul
     kv = KV("qwen3:8b", embed="qwen3-embedding:4b")
     idx = kv.index(["option one", "option two", ...])     # up to flat_max options: the list lives in the KV cache
     idx.choose("some state").choice                       # each call computes only the tokens of the state

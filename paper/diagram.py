@@ -1,10 +1,10 @@
 """
-Diagram of the two regimes of kvindex (cached list, embedding catalogue).
+Diagram of the two regimes of decidekv (cached list, embedding catalogue).
 
     python paper/diagram.py
 
 fig_mechanism.png          for the article
-kvindex_diagram_HD.png     the same drawing at high resolution
+decidekv_diagram_HD.png     the same drawing at high resolution
 """
 import os
 
@@ -117,7 +117,7 @@ def draw(name, dpi):
 
 def main():
     draw("fig_mechanism.png", 200)
-    draw("kvindex_diagram_HD.png", 400)
+    draw("decidekv_diagram_HD.png", 400)
 
 
 if __name__ == "__main__":

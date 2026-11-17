@@ -9,25 +9,25 @@
     "ms": 600.0674999959301,
     "queries": 150
   },
-  "banking77/77/kvindex": {
+  "banking77/77/decidekv": {
     "acc": 0.73,
     "ms": 161.09865000180434,
     "queries": 300,
     "build_s": 0.6285568000166677
   },
-  "wordnet/200/kvindex": {
+  "wordnet/200/decidekv": {
     "acc": 0.8266666666666667,
     "ms": 105.77899999043439,
     "queries": 150,
     "build_s": 0.7833089999912772
   },
-  "aim/225/kvindex": {
+  "aim/225/decidekv": {
     "acc": 1.0,
     "ms": 340.0934000092093,
     "games": 20,
     "mean_shots_when_won": 3.85
   },
-  "typed/all/kvindex": {
+  "typed/all/decidekv": {
     "acc": 0.696,
     "ms": 249.28004998946562,
     "decisions": 2000,
@@ -47,7 +47,7 @@
       "score": 0.64125
     }
   },
-  "typed/all/kvindex-state": {
+  "typed/all/decidekv-state": {
     "acc": 0.704,
     "ms": 193.33287999616005,
     "decisions": 2000,

@@ -20,8 +20,8 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data import DATA, gold_key, load_json, save_json, to_text, typed_decisions  # noqa: E402
-from kvindex import KV  # noqa: E402
-from kvindex.train import Head  # noqa: E402
+from decidekv import KV  # noqa: E402
+from decidekv.train import Head  # noqa: E402
 
 
 def predict_key(q, answer):

@@ -10,7 +10,7 @@ In-process llama.cpp backend.
   with the previous one. All logits are available (Ollama returns at most 20 log-probabilities).
 * Answers by name are decoded through a token trie of the options: the output is always one of the options.
 
-Needs llama-cpp-python (`pip install "kvindex[llamacpp]"`; on Windows also `python -m kvindex.get_llamacpp`).
+Needs llama-cpp-python (`pip install "decidekv[llamacpp]"`; on Windows also `python -m decidekv.get_llamacpp`).
 """
 from __future__ import annotations
 
@@ -82,13 +82,13 @@ def _find_ci(root: str, parts: list[str]) -> str | None:
 
 
 def _prepare_dlls():
-    """Use an official llama.cpp build when one is installed (KVINDEX_LLAMA_LIB, ~/.kvindex, or ./vendor): needed
+    """Use an official llama.cpp build when one is installed (DECIDEKV_LLAMA_LIB, ~/.decidekv, or ./vendor): needed
     when the llama-cpp-python wheel was compiled for CPU instructions this machine lacks. Otherwise, on Windows,
     make the CUDA runtime shipped with Ollama visible to the wheel."""
-    lib = os.environ.get("KVINDEX_LLAMA_LIB") or os.environ.get("LLAMA_CPP_LIB_PATH")
+    lib = os.environ.get("DECIDEKV_LLAMA_LIB") or os.environ.get("LLAMA_CPP_LIB_PATH")
     if not lib:
         here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        found = sorted(glob.glob(os.path.join(os.path.expanduser("~"), ".kvindex", "llama.cpp-*", "bin", "llama.dll"))
+        found = sorted(glob.glob(os.path.join(os.path.expanduser("~"), ".decidekv", "llama.cpp-*", "bin", "llama.dll"))
                        + glob.glob(os.path.join(here, "vendor", "llama.cpp-*", "bin", "llama.dll")))
         lib = os.path.dirname(found[-1]) if found else None
     if lib:
@@ -113,7 +113,7 @@ def _llama_cpp():
     try:
         import llama_cpp
     except ImportError as e:  # pragma: no cover
-        raise ImportError('backend="llamacpp" needs llama-cpp-python: pip install "kvindex[llamacpp]"') from e
+        raise ImportError('backend="llamacpp" needs llama-cpp-python: pip install "decidekv[llamacpp]"') from e
     return llama_cpp
 
 
@@ -206,7 +206,7 @@ class LlamaCpp:
         if not tpl:
             return "", ""
         import jinja2
-        marker = "\x00KVINDEX\x00"
+        marker = "\x00DECIDEKV\x00"
         out = jinja2.Environment().from_string(tpl).render(
             messages=[{"role": "user", "content": marker}], add_generation_prompt=True, enable_thinking=False,
             bos_token=self.llm.detokenize([self.llm.token_bos()]).decode(errors="ignore"), eos_token="")

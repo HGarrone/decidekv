@@ -94,7 +94,7 @@ def matrix():
 
 SIZES = [200, 1000, 3000, 10000, 30000]
 SERIES = [   # label, colour, result file, key pattern, sizes
-    ("kvindex", BLUE, "scale", "{n}/q150", SIZES),
+    ("DecideKV", BLUE, "scale", "{n}/q150", SIZES),
     ("CLM-8B as released", ORANGE, "reference", "clm8b/wordnet/{n}", SIZES),
     ("CLM-8B, heads fine-tuned", GREEN, "reference", "clm8b-ft/wordnet/{n}", SIZES),
     ("OpenJev architecture", PURPLE, "baselines", "wordnet/{n}/openjev", [200]),

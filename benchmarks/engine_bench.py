@@ -15,7 +15,7 @@ import warnings
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data import banking77, correct, load_json, save_json, to_text, typed_decisions  # noqa: E402
-from kvindex import KV, Noul, Score  # noqa: E402
+from decidekv import KV, Noul, Score  # noqa: E402
 
 PROMPT = dict(noun="intent", state_label="Customer message",
               question="Which intent does this customer message express?")

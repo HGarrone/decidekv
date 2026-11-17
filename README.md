@@ -1,8 +1,8 @@
-# kvindex
+# DecideKV
 
 **Fast decisions over many options with a local LLM.**
 
-`kvindex` picks one option out of a list for a given state (a message, a definition, the state of a game) with
+`decidekv` picks one option out of a list for a given state (a message, a definition, the state of a game) with
 a local LLM. It is a tool, not a new method: it packages known techniques so that one call does the right thing
 at every list size.
 
@@ -18,11 +18,11 @@ It speaks the `Choice` / `Score` / `Noul` question types of [OpenJev](https://gi
 any GGUF model that [Ollama](https://ollama.com) has downloaded (pure-attention and hybrid recurrent models alike),
 and works with any embedding model.
 
-The measurements and their protocol are written up in **[paper/kvindex.md](paper/kvindex.md)**; this README has the
+The measurements and their protocol are written up in **[paper/decidekv.md](paper/decidekv.md)**; this README has the
 instructions and the same tables.
 
 ```python
-from kvindex import KV
+from decidekv import KV
 
 kv = KV("qwen3:8b", embed="qwen3-embedding:4b")
 intents = kv.index(["card arrival", "lost or stolen card", "refund not showing up"],
@@ -37,8 +37,8 @@ intents.choose("I ordered my card two weeks ago and it's still not here").choice
 Download the repository (green **Code** button, **Download ZIP**, or `git clone`) and install it from its folder:
 
 ```bash
-git clone https://github.com/HGarrone/kvindex
-cd kvindex
+git clone https://github.com/HGarrone/decidekv
+cd decidekv
 pip install -e ".[llamacpp]"         # the library, llama-cpp-python, numpy
 ollama pull qwen3:8b                 # any pure-attention GGUF model
 ollama pull qwen3-embedding:4b       # any embedding model; only needed above 3,000 options or for training
@@ -49,7 +49,7 @@ built for a CPU feature the machine lacks. This command downloads the matching o
 checks its SHA-256:
 
 ```bash
-python -m kvindex.get_llamacpp
+python -m decidekv.get_llamacpp
 ```
 
 Run the offline tests with `pip install pytest` and `pytest`.
@@ -59,7 +59,7 @@ Run the offline tests with `pip install pytest` and `pytest`.
 ### One list of options, many states
 
 ```python
-from kvindex import KV
+from decidekv import KV
 
 kv = KV("qwen3:8b", embed="qwen3-embedding:4b")
 tools = kv.index({"search_flights": "find flights between two cities",
@@ -88,7 +88,7 @@ default) options are shown to the LLM.
 ### Several typed questions about one state
 
 ```python
-from kvindex import KV, Choice, Score, Noul
+from decidekv import KV, Choice, Score, Noul
 
 r = kv.decide(
     state={"customer": "This is the third time I write! My card was stolen yesterday."},
@@ -185,7 +185,7 @@ Qwen3-Embedding.
 
 ### Prompts in another language
 
-The fixed words of the prompt are templates (`kvindex.core.WORDING`); override them for your language:
+The fixed words of the prompt are templates (`decidekv.core.WORDING`); override them for your language:
 
 ```python
 italian = {"intro": "Sei un motore di decisione.{task} Rispondi alla domanda sul {state} scegliendo un {noun} "
@@ -214,7 +214,7 @@ talks to the Ollama server instead: it gives the same kind of answers, but the c
 there (it is reported as 0), the server recomputes the list on hybrid models, and every number below was measured
 with the llama.cpp engine unless stated. Call `kv.close()` to free the GPU.
 
-`KV(model, backend="llamaserver")` uses a llama.cpp `llama-server`: kvindex starts one on the model with the
+`KV(model, backend="llamaserver")` uses a llama.cpp `llama-server`: DecideKV starts one on the model with the
 llama.cpp build it finds (`n_ctx`, `slots`, `port`, `kv_type` go to `LlamaServer.start`), or
 `KV(model, backend="llamaserver", host="http://127.0.0.1:8080")` connects to a server you started yourself with
 several slots (`-np`). Each resident prefix gets a slot of its own; one slot is kept for the other prompts, and each
@@ -223,7 +223,7 @@ machine. Answers are decoded with a grammar of the option names, so they are alw
 is not available on this engine.
 
 Above 3,000 options the catalogue vectors can be kept on disk between runs:
-`kv.index(options, vectors=Catalog.cached(texts, kv.encoder, "cache_folder"))` with `from kvindex.catalog import
+`kv.index(options, vectors=Catalog.cached(texts, kv.encoder, "cache_folder"))` with `from decidekv.catalog import
 Catalog` (at 30,000 options this saves about 30 seconds per start).
 
 ## How it works
@@ -268,7 +268,7 @@ flowchart LR
         c1["state"] --> c2["contrastive heads<br/>trained for one model (Qwen3-8B)"] --> c3["score of each option"]
         c4["Needs fine-tuning on the task;<br/>the heads do not transfer<br/>to another model."]
     end
-    subgraph KV["kvindex"]
+    subgraph KV["DecideKV"]
         direction TB
         k1["options first: cached once<br/>(any number: catalogue above 3,000)"] --> k2["state: only the new tokens"] --> k3["constrained decoding:<br/>always one of the options"]
         k4["Any GGUF model of Ollama,<br/>hybrid models included.<br/>Optional training of the catalogue only,<br/>also without labels (the LLM teaches it)."]
@@ -282,8 +282,8 @@ flowchart LR
 ```
 
 **Why it matters.** The same model, prompt blocks and machine give, per decision: Banking77 60.7% in 65 ms for
-kvindex against 39.7% in 90 ms for the OpenJev architecture (Qwen3-8B), 73.0% in 161 ms against 45.7% in 409 ms on
-a hybrid 27B; kvindex keeps working at 30,000 options where OpenJev stops at 255; with the catalogue trained on the
+DecideKV against 39.7% in 90 ms for the OpenJev architecture (Qwen3-8B), 73.0% in 161 ms against 45.7% in 409 ms on
+a hybrid 27B; DecideKV keeps working at 30,000 options where OpenJev stops at 255; with the catalogue trained on the
 task it reaches 93.0% in 15 ms on Banking77 and 75.6% with no LLM call on Typed Decisions, above CLM-8B with heads
 fine-tuned on the same tasks (84.3% and 71.0%), on any model instead of one. The tables below have every number.
 
@@ -305,8 +305,8 @@ generated from the files in `results/` by `python benchmarks/report.py`.
 <!-- table:comparison -->
 | Method | Training | Banking77 (77 intents) | WordNet (200 words) | Typed Decisions | Aim game (games won, time per shot) |
 |---|---|---|---|---|---|
-| **kvindex** | none | 60.7% · 65 ms | 70.7% · 38 ms | 56.7% · 41 ms | 95.0% · 159 ms |
-| **kvindex, trained catalogue** | on the task | 93.0% · 16 ms | – | 75.6% · 57 ms | – |
+| **DecideKV** | none | 60.7% · 65 ms | 70.7% · 38 ms | 56.7% · 41 ms | 95.0% · 159 ms |
+| **DecideKV, trained catalogue** | on the task | 93.0% · 16 ms | – | 75.6% · 57 ms | – |
 | OpenJev architecture, shared prompt | none | 39.7% · 90 ms | 63.3% · 132 ms | 59.3% · 67 ms | 25.0% · 423 ms |
 | OpenJev library, own prompt, Ollama | none | 44.0% · 117 ms | 22.7% · 164 ms | 58.1% · 62 ms | 25.0% · 469 ms |
 | CLM-8B as released | none | 4.3% · 35 ms | 12.7% · 21 ms | 36.8% · 79 ms | 15.0% · 124 ms |
@@ -324,7 +324,7 @@ generated from the files in `results/` by `python benchmarks/report.py`.
   this project on the same machine and model weights, made with scripts that are not part of the repository.
   CLM-8B is Qwen3-8B plus the released CLM-v0.1-8B heads.
 - Banking77: 300 test messages. WordNet: 150 definitions, 200 candidate words. Typed Decisions: 2,000 decisions.
-  kvindex answers the five questions of a Typed Decisions case in one `decide` call (state first, the default).
+  DecideKV answers the five questions of a Typed Decisions case in one `decide` call (state first, the default).
   Aim game: 20 games on a 15×15 grid, at most 25 shots.
 
 ### The same comparison on a hybrid 27B model
@@ -336,7 +336,7 @@ aim game, so that the 9.3 GB of weights and the cache fit in 12 GB:
 <!-- table:hybrid27b -->
 | Method | Banking77 (77 intents) | WordNet (200 words) | Typed Decisions | Aim game (games won, time per shot) |
 |---|---|---|---|---|
-| **kvindex** | 73.0% · 161 ms | 82.7% · 106 ms | 70.4% · 193 ms | 100.0% · 340 ms |
+| **DecideKV** | 73.0% · 161 ms | 82.7% · 106 ms | 70.4% · 193 ms | 100.0% · 340 ms |
 | OpenJev architecture, shared prompt | 45.7% · 409 ms | 84.0% · 600 ms | 69.1% · 307 ms | not measured: over two hours (the whole grid is recomputed at every shot) |
 <!-- /table:hybrid27b -->
 
@@ -359,7 +359,7 @@ WordNet reverse dictionary (definition → word), 600 definitions:
 The same task with 150 definitions, next to the tools that were measured on it:
 
 <!-- table:scale150 -->
-| Options | kvindex | OpenJev architecture | CLM-8B as released | CLM-8B, heads fine-tuned |
+| Options | DecideKV | OpenJev architecture | CLM-8B as released | CLM-8B, heads fine-tuned |
 |---|---|---|---|---|
 | 200 | 72.7% · 40 ms | 63.3% · 132 ms | 12.7% · 21 ms | 26.0% · 21 ms |
 | 1,000 | 62.0% · 41 ms | not supported (max 255) | 4.7% · 21 ms | 16.7% · 21 ms |
@@ -421,8 +421,8 @@ the options-first prompt of the previous version) and the catalogue learns those
 | Catalogue alone, trained on the answers of Qwen3.8-27B (`kv.teach`) | none (the 27B labels the training states in 42 min) | 66.6% · 57 ms |
 | Same, state embedded once (`layout="state-once"`), official distributions | 6,000 human labels (soft) | 67.2% · 9 ms |
 | Same, state embedded once, answers of Qwen3.8-27B | none | 60.8% · 9 ms |
-| *kvindex with Qwen3-8B, no catalogue* | none | 56.7% · 41 ms |
-| *kvindex with Qwen3.8-27B, no catalogue* | none | 70.4% · 193 ms |
+| *DecideKV with Qwen3-8B, no catalogue* | none | 56.7% · 41 ms |
+| *DecideKV with Qwen3.8-27B, no catalogue* | none | 70.4% · 193 ms |
 | *CLM-8B, heads fine-tuned* | 6,000 human labels | 71.0% · 79 ms |
 <!-- /table:typedtrain -->
 
@@ -520,12 +520,12 @@ which moves probabilities by up to a few hundredths on near ties. On the hybrid 
 
 ### Reading the numbers
 
-- Without training, kvindex is ahead of the OpenJev architecture on three tasks out of four. On Typed Decisions
+- Without training, DecideKV is ahead of the OpenJev architecture on three tasks out of four. On Typed Decisions
   (few options per question, five different questions per case) it is behind with Qwen3-8B and ahead with the
   27B model.
 - It keeps working where OpenJev stops (255 options) and where the list no longer fits in memory.
-- CLM-8B with heads fine-tuned on the task is ahead of untrained kvindex where a training set exists (Banking77,
-  Typed Decisions). The trained catalogue of kvindex is ahead of it on both.
+- CLM-8B with heads fine-tuned on the task is ahead of untrained DecideKV where a training set exists (Banking77,
+  Typed Decisions). The trained catalogue of DecideKV is ahead of it on both.
 - With 600 queries one accuracy has a standard error of about 2 points, with 150 queries about 4. Times vary
   between sessions on the same machine: the same configuration at 10,000 options measured between 84 and 99 ms on
   one day, with identical accuracy in every repetition.
@@ -546,7 +546,7 @@ which moves probabilities by up to a few hundredths on near ties. On the hybrid 
 
 ## Credits and prior work
 
-kvindex combines techniques published by others. None of the mechanisms below is new here.
+DecideKV combines techniques published by others. None of the mechanisms below is new here.
 
 | Technique | Source |
 |---|---|
@@ -557,7 +557,7 @@ kvindex combines techniques published by others. None of the mechanisms below is
 | Contrastive training of state and option projections | InfoNCE (van den Oord et al., 2018), CLIP (Radford et al., 2021), Contrastive Language Models (CLM-v0.1-8B) |
 | Low-rank correction with an identity start | LoRA (Hu et al., 2021) |
 | Several typed questions scored in one batch over a context encoded once | SharedKV-BT (Wake and Wagle, 2026), LLM2Jev / LLM-as-Jev (Li and Wagle, 2026): concurrent work, found after the prefix tree was written |
-| `Choice` / `Score` / `Noul` question types | OpenJev (MIT licence, © 2026 GPT-AGI). kvindex contains no OpenJev code: the types are written from scratch with the same names for compatibility. |
+| `Choice` / `Score` / `Noul` question types | OpenJev (MIT licence, © 2026 GPT-AGI). DecideKV contains no OpenJev code: the types are written from scratch with the same names for compatibility. |
 
 What this repository adds is the packaging: one interface that selects between the cached list and the catalogue
 by size, exclusion of refuted options, an optional catalogue training that needs only numpy, and a measured
@@ -574,7 +574,7 @@ and the Typed Decisions dataset (Apache-2.0).
 ## Repository layout
 
 ```
-kvindex/        the library: core.py (cached index, typed questions), catalog.py (embedding catalogue),
+decidekv/        the library: core.py (cached index, typed questions), catalog.py (embedding catalogue),
                 train.py (optional training), llamacpp.py, llamaserver.py and ollama.py (engines)
 tests/          offline tests with a fake engine
 examples/       quickstart.py

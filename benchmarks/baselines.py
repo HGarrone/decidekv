@@ -1,11 +1,11 @@
 """
-kvindex and the reference methods under equal conditions (growing lists of kvindex alone: benchmarks/scale.py).
+decidekv and the reference methods under equal conditions (growing lists of decidekv alone: benchmarks/scale.py).
 
 The same engine (llama.cpp, in process), the same GGUF model (Qwen3-8B, the backbone of CLM-8B), the same KV-cache
-type, the same queries and the same prompt blocks (kvindex.core.Index: instructions, options, state, question, answer
+type, the same queries and the same prompt blocks (decidekv.core.Index: instructions, options, state, question, answer
 head). LLM methods differ only in the order of the blocks, in what stays cached and in how the answer is read.
 
-  kvindex     options first, kept in the KV cache; the answer is decoded by name through the option trie
+  decidekv     options first, kept in the KV cache; the answer is decoded by name through the option trie
               (the cached list, up to 3,000 options; larger lists are measured by benchmarks/scale.py)
   state-first the same blocks and decoding with the options after the state (nothing reusable across decisions)
   openjev     OpenJev's architecture: options after the state, one forward pass, first-token logit of every option
@@ -50,10 +50,10 @@ sys.path.insert(0, HERE)
 import clm  # noqa: E402
 from data import (DATA, banking77, banking77_train, correct, gold_key, load_json, save_json, to_text,  # noqa: E402
                   typed_decisions, wordnet, wordnet_train)
-from kvindex import KV  # noqa: E402
-from kvindex.core import Index, render_state  # noqa: E402
-from kvindex.catalog import QUERY_TEMPLATE  # noqa: E402
-from kvindex.llamacpp import LlamaCppEncoder  # noqa: E402
+from decidekv import KV  # noqa: E402
+from decidekv.core import Index, render_state  # noqa: E402
+from decidekv.catalog import QUERY_TEMPLATE  # noqa: E402
+from decidekv.llamacpp import LlamaCppEncoder  # noqa: E402
 
 LIST_PROMPTS = {
     "wordnet": dict(noun="word", state_label="Definition", question="Which word does this definition define?"),
@@ -61,10 +61,10 @@ LIST_PROMPTS = {
                       question="Which intent does this customer message express?"),
 }
 METHODS = {
-    "wordnet": ["emb", "emb+llm", "kvindex", "state-first", "openjev", "cross", "clm8b", "clm8b-ft"],
-    "banking77": ["emb", "emb+llm", "kvindex", "state-first", "openjev", "cross", "clm8b", "clm8b-ft"],
-    "typed": ["prior", "emb", "kvindex", "kvindex-state", "openjev", "clm8b", "clm8b-ft"],
-    "aim": ["random", "kvindex", "openjev", "clm8b"],
+    "wordnet": ["emb", "emb+llm", "decidekv", "state-first", "openjev", "cross", "clm8b", "clm8b-ft"],
+    "banking77": ["emb", "emb+llm", "decidekv", "state-first", "openjev", "cross", "clm8b", "clm8b-ft"],
+    "typed": ["prior", "emb", "decidekv", "decidekv-state", "openjev", "clm8b", "clm8b-ft"],
+    "aim": ["random", "decidekv", "openjev", "clm8b"],
 }
 TOP_K = 50
 CROSS_QUERIES = 30
@@ -175,7 +175,7 @@ def list_task(r: Runner, task: str, n: int):
         del enc
         gc.collect()
     # 2. LLM methods
-    llm_methods = [m for m in todo if m in ("kvindex", "state-first", "openjev", "emb+llm", "cross")]
+    llm_methods = [m for m in todo if m in ("decidekv", "state-first", "openjev", "emb+llm", "cross")]
     if llm_methods:
         try:
             kv = r.kv(flat_ctx(4 * n))
@@ -207,15 +207,15 @@ def llm_list_methods(r, task, n, kv, be, ix, options, queries, prompt, tops, emb
         except Exception as e:
             r.log(task, n, method, {"error": f"{type(e).__name__}: {e}"})
 
-    if "kvindex" in methods:
-        def run_kvindex():
+    if "decidekv" in methods:
+        def run_decidekv():
             t0 = time.perf_counter()
             idx = kv.index(options, **prompt)
             build = time.perf_counter() - t0
             row = timed(queries, lambda s: idx.choose(s).choice)
             row["build_s"] = build
             return row
-        safe("kvindex", run_kvindex)
+        safe("decidekv", run_decidekv)
     if "state-first" in methods:
         safe("state-first", lambda: timed(queries, lambda s: ix._match(
             be.pick_option(ix.segments(s, None, order="state-first"), ix.keys)[0] or "")))
@@ -373,7 +373,7 @@ def typed_task(r: Runner):
         enc.close()
         del enc
         gc.collect()
-    if "kvindex" in todo or "kvindex-state" in todo or "openjev" in todo:
+    if "decidekv" in todo or "decidekv-state" in todo or "openjev" in todo:
         kv = r.kv(a.n_ctx)
         be = kv.client
 
@@ -384,14 +384,14 @@ def typed_task(r: Runner):
                 return max(ans.probabilities, key=ans.probabilities.get)
             return "true" if ans.noul >= 0.5 else "false"
 
-        for method in ("kvindex", "kvindex-state", "openjev"):
+        for method in ("decidekv", "decidekv-state", "openjev"):
             if method not in todo:
                 continue
             preds, ms = [], []
             for c in test:
                 state = to_text(c["state"])
                 p = {}
-                if method == "kvindex-state":
+                if method == "decidekv-state":
                     t0 = time.perf_counter()
                     r_all = kv.decide(state, c["questions"], order="state")
                     share = 1000 * (time.perf_counter() - t0) / len(c["questions"])
@@ -402,7 +402,7 @@ def typed_task(r: Runner):
                     continue
                 for qid, qd in c["questions"].items():
                     t0 = time.perf_counter()
-                    if method == "kvindex":
+                    if method == "decidekv":
                         ans = kv.decide(state, {qid: qd}).answers[qid]
                         p[qid] = key_of(ans)
                     else:
@@ -531,12 +531,12 @@ def aim_task(r: Runner):
     if "random" in todo:
         rr = random.Random(0)
         play("random", lambda state, tried: rr.choice([c for c in cells if c not in tried]))
-    if "kvindex" in todo or "openjev" in todo:
+    if "decidekv" in todo or "openjev" in todo:
         kv = r.kv(a.n_ctx)
         be = kv.client
-        if "kvindex" in todo:
+        if "decidekv" in todo:
             idx = kv.index(cells, **AIM_PROMPT)
-            play("kvindex", lambda state, tried: idx.choose(state, exclude=tried).choice)
+            play("decidekv", lambda state, tried: idx.choose(state, exclude=tried).choice)
         if "openjev" in todo:
             def openjev_player(state, tried):
                 remaining = [c for c in cells if c not in tried]          # OpenJev receives the remaining cells

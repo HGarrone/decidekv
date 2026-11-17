@@ -1,9 +1,9 @@
 """
 Download the official llama.cpp build that matches the installed llama-cpp-python, verify it, and put it
-where kvindex looks for it (~/.kvindex/). Needed when the llama-cpp-python wheel was compiled for CPU
+where decidekv looks for it (~/.decidekv/). Needed when the llama-cpp-python wheel was compiled for CPU
 instructions this machine lacks (crash 0xc000001d / "illegal instruction", e.g. no AVX-512).
 
-    python -m kvindex.get_llamacpp
+    python -m decidekv.get_llamacpp
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ BUILDS = {
         "cudart-llama-bin-win-cuda-12.4-x64.zip": "8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6",
     }),
 }
-HOME = os.path.join(os.path.expanduser("~"), ".kvindex")
+HOME = os.path.join(os.path.expanduser("~"), ".decidekv")
 
 
 def sha256(path: str) -> str:
@@ -59,7 +59,7 @@ def main():
         print("verified", name)
         with zipfile.ZipFile(path) as z:
             z.extractall(os.path.join(dest, "bin"))
-    print("ready:", os.path.join(dest, "bin"), "(found automatically by kvindex)")
+    print("ready:", os.path.join(dest, "bin"), "(found automatically by decidekv)")
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ with several slots (`-np`), e.g.
 
     llama-server -m model.gguf -c 32768 -np 8 -fa on -ctk q8_0 -ctv q8_0
 
-or let `LlamaServer.start` launch the llama.cpp build found by kvindex. `score_options` (`full=True`) needs the logits
+or let `LlamaServer.start` launch the llama.cpp build found by decidekv. `score_options` (`full=True`) needs the logits
 of arbitrary tokens and is only available with the in-process engine.
 """
 from __future__ import annotations
@@ -45,7 +45,7 @@ class LlamaServer:
         path = model if model.endswith(".gguf") else ollama_gguf(model)
         exe = exe or _find_server()
         if not exe:
-            raise FileNotFoundError("llama-server not found: install a llama.cpp build in ~/.kvindex or ./vendor, "
+            raise FileNotFoundError("llama-server not found: install a llama.cpp build in ~/.decidekv or ./vendor, "
                                    "or pass exe=")
         cmd = [exe, "-m", path, "--port", str(port), "-c", str(n_ctx), "-np", str(slots), "-ngl", str(n_gpu_layers),
                "-fa", "on", "-ctk", kv_type, "-ctv", kv_type]
@@ -103,7 +103,7 @@ class LlamaServer:
         if not template:
             return "", ""
         import jinja2
-        marker = "\x00KVINDEX\x00"
+        marker = "\x00DECIDEKV\x00"
         out = jinja2.Environment().from_string(template).render(
             messages=[{"role": "user", "content": marker}],
             add_generation_prompt=True,
@@ -198,12 +198,12 @@ def _gbnf_literal(text: str) -> str:
 
 
 def _find_server() -> str | None:
-    """llama-server of a llama.cpp build in KVINDEX_LLAMA_LIB, ~/.kvindex or ./vendor (the newest), or None."""
+    """llama-server of a llama.cpp build in DECIDEKV_LLAMA_LIB, ~/.decidekv or ./vendor (the newest), or None."""
     name = "llama-server.exe" if os.name == "nt" else "llama-server"
-    lib = os.environ.get("KVINDEX_LLAMA_LIB")
+    lib = os.environ.get("DECIDEKV_LLAMA_LIB")
     if lib and os.path.exists(os.path.join(lib, name)):
         return os.path.join(lib, name)
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    found = sorted(glob.glob(os.path.join(os.path.expanduser("~"), ".kvindex", "llama.cpp-*", "bin", name)) +
+    found = sorted(glob.glob(os.path.join(os.path.expanduser("~"), ".decidekv", "llama.cpp-*", "bin", name)) +
                    glob.glob(os.path.join(here, "vendor", "llama.cpp-*", "bin", name)))
     return found[-1] if found else None

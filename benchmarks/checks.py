@@ -18,7 +18,7 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from kvindex.llamacpp import LlamaCpp  # noqa: E402
+from decidekv.llamacpp import LlamaCpp  # noqa: E402
 
 INTRO = ("You are a decision engine. Answer the question about the definition by choosing one word from the "
          "list of words. Reply with the word exactly as written in the list, and nothing else.\n\n### Words\n")
@@ -140,9 +140,9 @@ def baselines_check(a):
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import clm
     from baselines import QUERY_TEMPLATE, openjev_pick, run_cross
-    from kvindex import KV
-    from kvindex.core import Index
-    from kvindex.llamacpp import LlamaCppEncoder
+    from decidekv import KV
+    from decidekv.core import Index
+    from decidekv.llamacpp import LlamaCppEncoder
     words = ["river", "mountain", "question", "attention", "bicycle", "kitchen"]
     cases = [("a natural stream of water flowing to the sea", {"river"}),
              ("a room where food is prepared and cooked", {"kitchen"}),

@@ -1,10 +1,10 @@
-# kvindex: a tool for fast decisions over many options with a local LLM
+# DecideKV: a tool for fast decisions over many options with a local LLM
 
 ## Summary
 
 Many programs need the same small decision again and again: given a state, pick one option out of a list. A
 customer message goes to one of 77 intents; a definition names one of 30,000 words; an agent picks the next tool.
-`kvindex` is a Python library that makes this decision with a local LLM in 15 to about 100 milliseconds, for lists
+`decidekv` is a Python library that makes this decision with a local LLM in 15 to about 100 milliseconds, for lists
 from two options to tens of thousands, without training the LLM.
 
 The library does not introduce a new mechanism. It assembles published techniques behind one call:
@@ -28,7 +28,7 @@ decision, and how both change when the list grows.
 
 ## What the tool does
 
-![The two regimes of kvindex](fig_mechanism.png)
+![The two regimes of DecideKV](fig_mechanism.png)
 
 **Cached list.** The prompt starts with the instructions and the whole list of options, followed by the state and
 the question. In a causal LLM the keys and values of a token depend only on the tokens before it, so the cache of
@@ -126,8 +126,8 @@ together.
 <!-- table:comparison -->
 | Method | Training | Banking77 (77 intents) | WordNet (200 words) | Typed Decisions | Aim game (games won, time per shot) |
 |---|---|---|---|---|---|
-| **kvindex** | none | 60.7% · 65 ms | 70.7% · 38 ms | 56.7% · 41 ms | 95.0% · 159 ms |
-| **kvindex, trained catalogue** | on the task | 93.0% · 16 ms | – | 75.6% · 57 ms | – |
+| **DecideKV** | none | 60.7% · 65 ms | 70.7% · 38 ms | 56.7% · 41 ms | 95.0% · 159 ms |
+| **DecideKV, trained catalogue** | on the task | 93.0% · 16 ms | – | 75.6% · 57 ms | – |
 | OpenJev architecture, shared prompt | none | 39.7% · 90 ms | 63.3% · 132 ms | 59.3% · 67 ms | 25.0% · 423 ms |
 | OpenJev library, own prompt, Ollama | none | 44.0% · 117 ms | 22.7% · 164 ms | 58.1% · 62 ms | 25.0% · 469 ms |
 | CLM-8B as released | none | 4.3% · 35 ms | 12.7% · 21 ms | 36.8% · 79 ms | 15.0% · 124 ms |
@@ -140,10 +140,10 @@ together.
 
 ![Accuracy of every method on every task](fig_matrix.png)
 
-Without training, kvindex is ahead of the OpenJev architecture on Banking77, WordNet and the aim game, and behind
+Without training, DecideKV is ahead of the OpenJev architecture on Banking77, WordNet and the aim game, and behind
 it on Typed Decisions, where every case asks five different questions with few options each. CLM-8B as released is
-below both on the four tasks; with heads fine-tuned on the task it is ahead of untrained kvindex on Banking77 and
-Typed Decisions. The trained catalogue of kvindex is ahead of it on both. On Typed Decisions kvindex answers the
+below both on the four tasks; with heads fine-tuned on the task it is ahead of untrained DecideKV on Banking77 and
+Typed Decisions. The trained catalogue of DecideKV is ahead of it on both. On Typed Decisions DecideKV answers the
 five questions of a case in one `decide` call, which puts the state first (the default); one question per call with
 the options first gives 51.1% (see the section on prompt order).
 
@@ -156,7 +156,7 @@ aim game, so that the 9.3 GB of weights and the cache fit in 12 GB:
 <!-- table:hybrid27b -->
 | Method | Banking77 (77 intents) | WordNet (200 words) | Typed Decisions | Aim game (games won, time per shot) |
 |---|---|---|---|---|
-| **kvindex** | 73.0% · 161 ms | 82.7% · 106 ms | 70.4% · 193 ms | 100.0% · 340 ms |
+| **DecideKV** | 73.0% · 161 ms | 82.7% · 106 ms | 70.4% · 193 ms | 100.0% · 340 ms |
 | OpenJev architecture, shared prompt | 45.7% · 409 ms | 84.0% · 600 ms | 69.1% · 307 ms | not measured: over two hours (the whole grid is recomputed at every shot) |
 <!-- /table:hybrid27b -->
 
@@ -178,7 +178,7 @@ The time per decision goes from about 40 ms at 1,000 options to about 100 ms at 
 seconds: one pass over the list, or one embedding per option. Accuracy falls as the candidates multiply.
 
 <!-- table:scale150 -->
-| Options | kvindex | OpenJev architecture | CLM-8B as released | CLM-8B, heads fine-tuned |
+| Options | DecideKV | OpenJev architecture | CLM-8B as released | CLM-8B, heads fine-tuned |
 |---|---|---|---|---|
 | 200 | 72.7% · 40 ms | 63.3% · 132 ms | 12.7% · 21 ms | 26.0% · 21 ms |
 | 1,000 | 62.0% · 41 ms | not supported (max 255) | 4.7% · 21 ms | 16.7% · 21 ms |
@@ -250,8 +250,8 @@ decisions); the trained catalogue answers alone, with no LLM call.
 | Catalogue alone, trained on the answers of Qwen3.8-27B (`kv.teach`) | none (the 27B labels the training states in 42 min) | 66.6% · 57 ms |
 | Same, state embedded once (`layout="state-once"`), official distributions | 6,000 human labels (soft) | 67.2% · 9 ms |
 | Same, state embedded once, answers of Qwen3.8-27B | none | 60.8% · 9 ms |
-| *kvindex with Qwen3-8B, no catalogue* | none | 56.7% · 41 ms |
-| *kvindex with Qwen3.8-27B, no catalogue* | none | 70.4% · 193 ms |
+| *DecideKV with Qwen3-8B, no catalogue* | none | 56.7% · 41 ms |
+| *DecideKV with Qwen3.8-27B, no catalogue* | none | 70.4% · 193 ms |
 | *CLM-8B, heads fine-tuned* | 6,000 human labels | 71.0% · 79 ms |
 <!-- /table:typedtrain -->
 
@@ -375,9 +375,9 @@ zero). Confident answers do not move.
 ```bash
 python benchmarks/checks.py --baselines        # correctness checks, to run first
 python benchmarks/baselines.py --task banking77
-python benchmarks/baselines.py --task wordnet --sizes 200 --methods kvindex,openjev
-python benchmarks/baselines.py --task typed --methods kvindex,kvindex-state,openjev
-python benchmarks/baselines.py --task aim --methods kvindex,openjev
+python benchmarks/baselines.py --task wordnet --sizes 200 --methods decidekv,openjev
+python benchmarks/baselines.py --task typed --methods decidekv,decidekv-state,openjev
+python benchmarks/baselines.py --task aim --methods decidekv,openjev
 python benchmarks/scale.py --sizes 1000,3000,10000,30000
 python benchmarks/scale.py --sizes 200,1000,3000,10000,30000 --queries 150 --core 200
 python benchmarks/train_bench.py

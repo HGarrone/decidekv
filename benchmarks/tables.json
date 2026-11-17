@@ -2,7 +2,7 @@
   "suffix": "qwen3_8b",
   "documents": [
     "README.md",
-    "paper/kvindex.md"
+    "paper/decidekv.md"
   ],
   "tables": {
     "comparison": {
@@ -16,15 +16,15 @@
       ],
       "rows": [
         [
-          "**kvindex**",
+          "**DecideKV**",
           "none",
-          "@baselines#banking77/77/kvindex|acc_ms",
-          "@baselines#wordnet/200/kvindex|acc_ms",
-          "@baselines#typed/all/kvindex-state|acc_ms",
-          "@baselines#aim/225/kvindex|acc_ms"
+          "@baselines#banking77/77/decidekv|acc_ms",
+          "@baselines#wordnet/200/decidekv|acc_ms",
+          "@baselines#typed/all/decidekv-state|acc_ms",
+          "@baselines#aim/225/decidekv|acc_ms"
         ],
         [
-          "**kvindex, trained catalogue**",
+          "**DecideKV, trained catalogue**",
           "on the task",
           "@train#banking77/catalogue-k1-trained|acc_ms",
           "–",
@@ -144,7 +144,7 @@
     "scale150": {
       "header": [
         "Options",
-        "kvindex",
+        "DecideKV",
         "OpenJev architecture",
         "CLM-8B as released",
         "CLM-8B, heads fine-tuned"
@@ -291,11 +291,11 @@
       ],
       "rows": [
         [
-          "**kvindex**",
-          "@baselines_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#banking77/77/kvindex|acc_ms",
-          "@baselines_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#wordnet/200/kvindex|acc_ms",
-          "@baselines_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#typed/all/kvindex-state|acc_ms",
-          "@baselines_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#aim/225/kvindex|acc_ms"
+          "**DecideKV**",
+          "@baselines_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#banking77/77/decidekv|acc_ms",
+          "@baselines_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#wordnet/200/decidekv|acc_ms",
+          "@baselines_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#typed/all/decidekv-state|acc_ms",
+          "@baselines_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#aim/225/decidekv|acc_ms"
         ],
         [
           "OpenJev architecture, shared prompt",
@@ -349,14 +349,14 @@
           "@typed_train#typed-once/trained-teacher-ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S|acc_ms"
         ],
         [
-          "*kvindex with Qwen3-8B, no catalogue*",
+          "*DecideKV with Qwen3-8B, no catalogue*",
           "none",
-          "@baselines#typed/all/kvindex-state|acc_ms"
+          "@baselines#typed/all/decidekv-state|acc_ms"
         ],
         [
-          "*kvindex with Qwen3.8-27B, no catalogue*",
+          "*DecideKV with Qwen3.8-27B, no catalogue*",
           "none",
-          "@baselines_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#typed/all/kvindex-state|acc_ms"
+          "@baselines_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#typed/all/decidekv-state|acc_ms"
         ],
         [
           "*CLM-8B, heads fine-tuned*",
@@ -374,13 +374,13 @@
       "rows": [
         [
           "Options first, one question per call",
-          "@baselines#typed/all/kvindex|acc_ms",
-          "@baselines_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#typed/all/kvindex|acc_ms"
+          "@baselines#typed/all/decidekv|acc_ms",
+          "@baselines_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#typed/all/decidekv|acc_ms"
         ],
         [
           "**State first, the five questions of a case in one call** (`decide` default)",
-          "@baselines#typed/all/kvindex-state|acc_ms",
-          "@baselines_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#typed/all/kvindex-state|acc_ms"
+          "@baselines#typed/all/decidekv-state|acc_ms",
+          "@baselines_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#typed/all/decidekv-state|acc_ms"
         ],
         [
           "OpenJev architecture (state first, one question per call)",

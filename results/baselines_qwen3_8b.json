@@ -5,7 +5,7 @@
     "queries": 300,
     "recall_top_k": 0.9966666666666667
   },
-  "banking77/77/kvindex": {
+  "banking77/77/decidekv": {
     "acc": 0.6066666666666667,
     "ms": 65.21095000061905,
     "queries": 300,
@@ -37,7 +37,7 @@
     "ms": 34.66889999981504,
     "queries": 300
   },
-  "wordnet/200/kvindex": {
+  "wordnet/200/decidekv": {
     "acc": 0.7066666666666667,
     "ms": 37.990550001268275,
     "queries": 150,
@@ -48,7 +48,7 @@
     "ms": 131.6297500015935,
     "queries": 150
   },
-  "typed/all/kvindex": {
+  "typed/all/decidekv": {
     "acc": 0.511,
     "ms": 62.41379999846686,
     "decisions": 2000,
@@ -68,7 +68,7 @@
       "score": 0.54
     }
   },
-  "aim/225/kvindex": {
+  "aim/225/decidekv": {
     "acc": 0.95,
     "ms": 158.6488500033738,
     "games": 20,
@@ -80,7 +80,7 @@
     "games": 20,
     "mean_shots_when_won": 10.6
   },
-  "typed/all/kvindex-state": {
+  "typed/all/decidekv-state": {
     "acc": 0.567,
     "ms": 41.00198999803979,
     "decisions": 2000,
