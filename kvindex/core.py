@@ -225,19 +225,10 @@ class Index:
         usage.output_tokens += st.get("output_tokens", 0)
 
     def _choose_labels(self, state, instructions, usage, allowed, order="options-first") -> ChoiceAnswer:
-        by_key = dict(zip(self.keys, self.labels))
-        labels = [by_key[k_] for k_ in allowed]
-        lps, st = self.kv.client.label_logprobs(
-            self.segments(state, instructions, order),
-            labels,
-            self.num_ctx
-        )
+        segments, labels = self.label_request(state, instructions, allowed, order)
+        lps, st = self.kv.client.label_logprobs(segments, labels, self.num_ctx)
         self._account(st, usage)
-        lp = {self.keys[self.labels.index(lab)]: v for lab, v in lps.items() if lab in labels}
-        probs = softmax(lp)
-        full = {k_: round(probs.get(k_, 0.0), 6) for k_ in self.keys}
-        best = max(probs, key=probs.get)
-        return ChoiceAnswer(choice=best, probabilities=full, confidence=round(confidence(list(full.values())), 4))
+        return self.label_answer(lps, labels)
 
     def _choose_name(self, state, instructions, usage, allowed, order="options-first") -> ChoiceAnswer:
         text, lp, st = self.kv.client.pick_option(
@@ -272,6 +263,20 @@ class Index:
     def __repr__(self):
         mode = "labels+logprobs" if self.labels else ("enum" if self.n <= self.enum_max else "free+match")
         return f"Index(n={self.n}, mode={mode}, prompt_tokens={self.prompt_tokens})"
+
+    def label_request(self, state, instructions, allowed, order="options-first"):
+        """(segments, labels) of one label decision, to be answered by the backend."""
+        by_key = dict(zip(self.keys, self.labels))
+        labels = [by_key[k_] for k_ in allowed]
+        return self.segments(state, instructions, order), labels
+
+    def label_answer(self, lps, labels) -> ChoiceAnswer:
+        """The answer from the label log-probabilities returned by the backend."""
+        lp = {self.keys[self.labels.index(lab)]: v for lab, v in lps.items() if lab in labels}
+        probs = softmax(lp)
+        full = {k_: round(probs.get(k_, 0.0), 6) for k_ in self.keys}
+        best = max(probs, key=probs.get)
+        return ChoiceAnswer(choice=best, probabilities=full, confidence=round(confidence(list(full.values())), 4))
 
 
 class KV:
@@ -452,7 +457,7 @@ class KV:
             return self._decide_catalog(state, questions, head)
         t0 = time.perf_counter()
         usage, answers = Usage(), {}
-        items = [(qid,) + tuple(self.question_index(q, labels=labels)) for qid, q in questions.items()]
+        items = [(qid,) + tuple(self.question_index(q, labels=labels, warm=False)) for qid, q in questions.items()]
         if order not in ("auto", "options", "state"):
             raise ValueError(f"unknown order {order!r}")
         if order == "state":
@@ -463,6 +468,7 @@ class KV:
             shared = short if len(short) >= 2 else set()
         else:
             shared = set()
+        pre = {}
         held = None
         if shared:
             first = next(idx for qid, _, idx, _ in items if qid in shared)
@@ -470,13 +476,27 @@ class KV:
             self.client.hold(held)
         try:
             for qid, q, idx, instructions in items:
-                a = idx.choose(
-                    state,
-                    instructions,
-                    usage,
-                    full=full and q.type == "choice",
-                    order="shared-state" if qid in shared else "options-first"
-                )
+                if qid not in shared and getattr(idx, "prompt_tokens", 0) is None:
+                    idx.warm()
+            batch = [(qid, idx, ins) for qid, q, idx, ins in items
+                     if qid in shared and idx.labels and not (full and q.type == "choice")]
+            if len(batch) >= 2 and hasattr(self.client, "label_logprobs_tree"):
+                reqs = [idx.label_request(state, ins, idx.keys, "shared-state") for _, idx, ins in batch]
+                results = self.client.label_logprobs_tree(reqs)
+                for (qid, idx, _), (_, lab), (lps, st) in zip(batch, reqs, results):
+                    Index._account(st, usage)
+                    pre[qid] = idx.label_answer(lps, lab)
+            for qid, q, idx, instructions in items:
+                if qid in pre:
+                    a = pre[qid]
+                else:
+                    a = idx.choose(
+                        state,
+                        instructions,
+                        usage,
+                        full=full and q.type == "choice",
+                        order="shared-state" if qid in shared else "options-first"
+                    )
                 if q.type == "choice":
                     if temperature != 1.0 and a.probabilities:
                         a = _retemper(a, temperature)

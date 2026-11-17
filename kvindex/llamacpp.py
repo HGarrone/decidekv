@@ -595,6 +595,119 @@ class LlamaCpp:
             self.seq_rm(seq, -1, -1)
             del self.bases[seq]
 
+    def label_logprobs_tree(self, items):
+        """Single-token label log-probabilities for several prompts that share their first segment (one state) and
+        may share their second one (one option list): the state is evaluated once, each distinct second segment
+        once, and the last segments of all the prompts in parallel sequences. `items` is a list of
+        (segments, labels); returns one (log-probabilities, stats) per item, like `label_logprobs`."""
+        import numpy as np
+        if not items:
+            return []
+        s0 = items[0][0][0]
+        if any(item[0][0] != s0 for item in items):
+            raise ValueError("label_logprobs_tree needs prompts with the same first segment")
+        p0 = self._tokens(self._wrap[0] + s0)
+        if self.bos() and (not p0 or p0[0] != self.bos()[0]):
+            p0 = self.bos() + p0
+        seq_b, made = self._base(p0)
+        n0 = len(p0)
+        free = [s for s in range(1, self.resident + self.scratch + 1) if s not in self.bases]
+        if len(free) < 2:
+            return [self.label_logprobs(seg, labels) for seg, labels in items]
+        groups = {}
+        for i, item in enumerate(items):
+            s1 = item[0][1]
+            if s1 not in groups:
+                groups[s1] = []
+            groups[s1].append(i)
+        shared_groups = {s1: idxs for s1, idxs in groups.items() if len(idxs) > 1}
+        single_groups = {s1: idxs for s1, idxs in groups.items() if len(idxs) == 1}
+        n_blocks = min(len(shared_groups), len(free) // 2)
+        sorted_shared = sorted(shared_groups.items(), key=lambda x: len(x[1]), reverse=True)
+        block_seq = {s1: free[j] for j, (s1, _) in enumerate(sorted_shared[:n_blocks])}
+        tails = free[n_blocks:]
+        out = [None] * len(items)
+        paid = set()
+        first = True
+        for s1, seq in block_seq.items():
+            p1 = self._tokens(s1)
+            self.seq_rm(seq, -1, -1)
+            self.seq_cp(seq_b, seq)
+            self._decode(p1, n0, seq)
+        jobs = []
+        for i, item in enumerate(items):
+            s1, s2 = item[0][1], item[0][2]
+            if s1 in block_seq:
+                src = block_seq[s1]
+                pos = n0 + len(self._tokens(s1))
+                toks = self._tokens(s2 + self._wrap[1])
+                block_len = len(self._tokens(s1))
+            else:
+                src = seq_b
+                pos = n0
+                toks = self._tokens(s1) + self._tokens(s2 + self._wrap[1])
+                block_len = 0
+            jobs.append((i, src, pos, toks, block_len))
+        k = 0
+        while k < len(jobs):
+            chunk = []
+            used = 0
+            while k < len(jobs) and len(chunk) < len(tails):
+                i, src, pos, toks, block_len = jobs[k]
+                if len(toks) > self.n_batch:
+                    raise ValueError("question longer than n_batch tokens")
+                if used + len(toks) > self.n_batch:
+                    break
+                chunk.append((k, i, src, pos, toks, block_len))
+                used += len(toks)
+                k += 1
+            if not chunk:
+                break
+            b = self.batch
+            b.n_tokens = 0
+            for c, (k_idx, i, src, pos, toks, block_len) in enumerate(chunk):
+                seq = tails[c]
+                self.seq_rm(seq, -1, -1)
+                self.seq_cp(src, seq)
+                for t, tok in enumerate(toks):
+                    b.token[b.n_tokens] = tok
+                    b.pos[b.n_tokens] = pos + t
+                    b.n_seq_id[b.n_tokens] = 1
+                    b.seq_id[b.n_tokens][0] = seq
+                    b.logits[b.n_tokens] = int(t == len(toks) - 1)
+                    b.n_tokens += 1
+            rc = self.L.llama_decode(self.ctx, b)
+            if rc != 0:
+                raise RuntimeError(f"llama_decode failed with code {rc}")
+            logits = np.ctypeslib.as_array(self.L.llama_get_logits(self.ctx), shape=(len(chunk), self.n_vocab))
+            for c, (k_idx, i, src, pos, toks, block_len) in enumerate(chunk):
+                row = logits[c].astype(np.float64)
+                m = row.max()
+                lp = row - (m + np.log(np.sum(np.exp(row - m))))
+                labels_dict = {}
+                labels = items[i][1]
+                for lab in labels:
+                    ids = {self.tokenize(v)[0] for v in (lab, " " + lab)}
+                    labels_dict[lab] = float(math.log(sum(math.exp(lp[t_id]) for t_id in ids)))
+                computed = len(toks)
+                s1 = items[i][0][1]
+                if s1 in block_seq and s1 not in paid:
+                    computed += block_len
+                    paid.add(s1)
+                if first:
+                    computed += made
+                    first = False
+                p1len = len(self._tokens(s1))
+                p2len = len(self._tokens(items[i][0][2] + self._wrap[1]))
+                st = {"input_tokens": computed, "cached_tokens": n0 + p1len + p2len - computed,
+                      "output_tokens": 1}
+                out[i] = (labels_dict, st)
+            for c in range(len(chunk)):
+                self.seq_rm(tails[c], -1, -1)
+        for s1, seq in block_seq.items():
+            self.seq_rm(seq, -1, -1)
+        return out
+
 
 # ---------------------------------------------------------------- embedding encoder
 class LlamaCppEncoder:

@@ -297,7 +297,7 @@ generated from the files in `results/` by `python benchmarks/report.py`.
 <!-- table:comparison -->
 | Method | Training | Banking77 (77 intents) | WordNet (200 words) | Typed Decisions | Aim game (games won, time per shot) |
 |---|---|---|---|---|---|
-| **kvindex** | none | 60.7% · 65 ms | 70.7% · 38 ms | 56.9% · 48 ms | 95.0% · 159 ms |
+| **kvindex** | none | 60.7% · 65 ms | 70.7% · 38 ms | 56.7% · 41 ms | 95.0% · 159 ms |
 | **kvindex, trained catalogue** | on the task | 93.0% · 16 ms | – | 75.6% · 57 ms | – |
 | OpenJev architecture, shared prompt | none | 39.7% · 90 ms | 63.3% · 132 ms | 59.3% · 67 ms | 25.0% · 423 ms |
 | OpenJev library, own prompt, Ollama | none | 44.0% · 117 ms | 22.7% · 164 ms | 58.1% · 62 ms | 25.0% · 469 ms |
@@ -328,7 +328,7 @@ aim game, so that the 9.3 GB of weights and the cache fit in 12 GB:
 <!-- table:hybrid27b -->
 | Method | Banking77 (77 intents) | WordNet (200 words) | Typed Decisions | Aim game (games won, time per shot) |
 |---|---|---|---|---|
-| **kvindex** | 73.0% · 161 ms | 82.7% · 106 ms | 70.5% · 188 ms | 100.0% · 340 ms |
+| **kvindex** | 73.0% · 161 ms | 82.7% · 106 ms | 70.4% · 193 ms | 100.0% · 340 ms |
 | OpenJev architecture, shared prompt | 45.7% · 409 ms | 84.0% · 600 ms | 69.1% · 307 ms | not measured: over two hours (the whole grid is recomputed at every shot) |
 <!-- /table:hybrid27b -->
 
@@ -411,8 +411,8 @@ the options-first prompt of the previous version) and the catalogue learns those
 | **Catalogue alone, trained on the official distributions** | 6,000 human labels (soft) | 75.6% · 57 ms |
 | Catalogue alone, trained on the answers of Qwen3-8B (`kv.teach`) | none (the 8B labels the training states in 6 min) | 50.4% · 57 ms |
 | Catalogue alone, trained on the answers of Qwen3.8-27B (`kv.teach`) | none (the 27B labels the training states in 42 min) | 66.6% · 57 ms |
-| *kvindex with Qwen3-8B, no catalogue* | none | 56.9% · 48 ms |
-| *kvindex with Qwen3.8-27B, no catalogue* | none | 70.5% · 188 ms |
+| *kvindex with Qwen3-8B, no catalogue* | none | 56.7% · 41 ms |
+| *kvindex with Qwen3.8-27B, no catalogue* | none | 70.4% · 193 ms |
 | *CLM-8B, heads fine-tuned* | 6,000 human labels | 71.0% · 79 ms |
 <!-- /table:typedtrain -->
 
@@ -434,7 +434,7 @@ Decisions this is more accurate and faster than one question per call with the o
 | Typed Decisions, 2,000 decisions | Qwen3-8B | Qwen3.8-27B (hybrid) |
 |---|---|---|
 | Options first, one question per call | 51.1% · 62 ms | 69.6% · 249 ms |
-| **State first, the five questions of a case in one call** (`decide` default) | 56.9% · 48 ms | 70.5% · 188 ms |
+| **State first, the five questions of a case in one call** (`decide` default) | 56.7% · 41 ms | 70.4% · 193 ms |
 | OpenJev architecture (state first, one question per call) | 59.3% · 67 ms | 69.1% · 307 ms |
 <!-- /table:order -->
 
@@ -443,23 +443,26 @@ A turn of 15 questions about one state, with a short and a long state (the state
 <!-- table:turn -->
 | Turn of 15 questions (4 `Score`, 11 `Noul`) on one state | Short state (99 characters) | Long state (3,177 characters) |
 |---|---|---|
-| Qwen3-8B, options first | 333 ms | 2,555 ms |
-| Qwen3-8B, state first (`auto`) | 415 ms | 573 ms |
+| Qwen3-8B, options first | 330 ms | 2,537 ms |
+| Qwen3-8B, state first (`auto`) | 171 ms | 329 ms |
 | Qwen3-8B on `llama-server`, options first | 430 ms | 904 ms |
 | Qwen3-8B on `llama-server`, state first (`auto`) | 466 ms | 615 ms |
-| Qwen3.8-27B (hybrid), options first | 1,216 ms | 11,209 ms |
-| Qwen3.8-27B (hybrid), state first (`auto`) | 1,587 ms | 2,255 ms |
+| Qwen3.8-27B (hybrid), options first | 1,198 ms | 11,105 ms |
+| Qwen3.8-27B (hybrid), state first (`auto`) | 916 ms | 1,591 ms |
 <!-- /table:turn -->
 
-With a long state the state-first order is four to five times faster in process: the options-first order recomputes the
-state for every question. With a very short state it is slower (by 25 to 31%), because the instructions and the
-options of each question are then computed at every call; `auto` still uses it for short option lists because it
-is more accurate (table above). Every turn has a new state, so no engine can reuse the state of the previous turn.
+In process the questions that share the state are answered as a prefix tree: the state is evaluated once, the
+instructions and options of a list used by several questions once (here one block for the 4 `Score` and one for the
+11 `Noul`), and the questions themselves in parallel sequences of one `llama_decode`. With a long state this is
+about eight times faster than the options-first order on Qwen3-8B and seven times on the 27B; with a very short state
+it is still faster (171 against 330 ms, 916 against 1,198 ms). On the hybrid 27B llama.cpp slows down beyond eight
+sequences, so the questions run five at a time and the gain is smaller. Questions answered by option name (`Choice`
+with labels off) are decoded token by token and stay outside the batch. Every turn has a new state, so no engine
+can reuse the state of the previous turn.
 
-On `llama-server` the options-first order loses less with a long state (904 ms against 2,555 ms in process): the
-11 `Noul` questions use the same option list, hence the same server slot, and the server reuses the whole common
-prefix of consecutive prompts in a slot, state included. The in-process engine reuses only the resident prefix and
-recomputes the rest; reusing the common prefix after it is a possible improvement.
+On `llama-server` there is no prefix tree: the questions go one by one, and the server reuses the common prefix of
+consecutive prompts in a slot (the 11 `Noul` questions share a slot, state included), which is why its options-first
+order loses less with a long state.
 
 ### Engine: resident prefix on any architecture
 
@@ -470,7 +473,7 @@ recomputed at every decision:
 | Model | Architecture | Banking77, list resident | Banking77, prompt recomputed |
 |---|---|---|---|
 | Qwen3-8B (36 attention layers) | qwen3 | 63.0% · 65 ms | 66.0% · 137 ms |
-| Qwen3.8-27B (hybrid: recurrent + attention layers, IQ2_S) | qwen35 | 76.0% · 163 ms | 76.0% · 479 ms |
+| Qwen3.8-27B (hybrid: recurrent + attention layers, IQ2_S) | qwen35 | 76.0% · 161 ms | 76.0% · 475 ms |
 | Qwen3-8B on `llama-server` (8 slots) | qwen3 | 63.0% · 75 ms | not measured |
 <!-- /table:engine -->
 

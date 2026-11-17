@@ -558,3 +558,48 @@ def test_ollama_gguf_vision_model_skips_projector(tmp_path, monkeypatch):
                   [{"mediaType": "application/vnd.ollama.image.projector", "digest": "sha256:proj"},
                    {"mediaType": "application/vnd.ollama.image.model", "digest": "sha256:model"}])
     assert ollama_gguf("vis:iq2_s") == os.path.join(str(tmp_path), "blobs", "sha256-model")
+
+
+class TreeClient(FakeClient):
+    """FakeClient with the batched method: answers every item with label_logprobs and records the batches."""
+
+    def __init__(self):
+        super().__init__()
+        self.trees = []
+        self.prefills = 0
+
+    def prefill(self, segments, num_ctx=None):
+        self.prefills += 1
+        return super().prefill(segments, num_ctx)
+
+    def label_logprobs_tree(self, items):
+        self.trees.append(len(items))
+        return [self.label_logprobs(segments, labels) for segments, labels in items]
+
+
+def test_decide_batches_label_questions_that_share_the_state():
+    qs = {"n1": Noul(instructions="Is the light red?"), "n2": Noul(instructions="Is it raining?"),
+          "n3": Noul(instructions="Is it late?"),
+          "s": Score(instructions="How loud is it?", criteria=["quiet", "loud"])}
+    state = "A long street at night. " * 20
+    plain = make_kv()
+    r_plain = plain.decide(state, qs, order="state")
+    kv = make_kv()
+    kv.client = TreeClient()
+    r_tree = kv.decide(state, qs, order="state")
+    assert kv.client.trees == [4]
+    for qid in qs:
+        assert r_tree.answers[qid] == r_plain.answers[qid]
+    assert kv.client.prefills == 0
+    assert r_tree.usage.output_tokens == r_plain.usage.output_tokens
+
+
+def test_decide_without_tree_method_or_single_question():
+    kv = make_kv()
+    kv.client = TreeClient()
+    kv.decide("A long street at night. " * 20, {"a": Noul(instructions="Is it late?")}, order="state")
+    assert kv.client.trees == []
+    kv.decide("A long street at night. " * 20, {"a": Noul(instructions="Is it late?"),
+                                                "b": Noul(instructions="Is it red?")}, order="options")
+    assert kv.client.trees == []
+    assert kv.client.prefills >= 1

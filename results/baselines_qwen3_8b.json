@@ -81,13 +81,13 @@
     "mean_shots_when_won": 10.6
   },
   "typed/all/kvindex-state": {
-    "acc": 0.5685,
-    "ms": 48.27211999981955,
+    "acc": 0.567,
+    "ms": 41.00198999803979,
     "decisions": 2000,
     "by_type": {
-      "choice": 0.5566666666666666,
-      "noul": 0.6383333333333333,
-      "score": 0.525
+      "choice": 0.55,
+      "noul": 0.635,
+      "score": 0.52875
     }
   }
 }
