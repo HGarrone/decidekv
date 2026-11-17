@@ -620,3 +620,14 @@ def test_cascade_threshold():
     for qid in qs:
         assert r1.answers[qid] == plain.answers[qid]
     assert r1.model.endswith("/cascade")
+
+
+def test_train_questions_per_question_layout():
+    choice, score, noul, examples = typed_examples()
+    kv = make_kv(embed=FakeEncoder())
+    head = kv.train_questions(examples, layout="per-question", epochs=60, batch=32, lr=0.01)
+    assert head.report["layout"] == "per-question"
+    r = kv.decide("yyyy", {"c": choice}, head=head)
+    assert r.answers["c"].choice == "cccc"
+    with pytest.raises(ValueError):
+        kv.train_questions(examples, layout="sideways")

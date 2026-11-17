@@ -536,25 +536,40 @@ class KV:
             latency_ms=round((time.perf_counter() - t0) * 1000, 2)
         )
 
-    def train_questions(self, examples: Any, out: str | None = None, **fit_kw) -> Any:
+    def train_questions(self, examples: Any, out: str | None = None, layout: str = "per-question",
+                        **fit_kw) -> Any:
         """Train the embedding catalogue on typed questions. `examples`: (state, question, answer) triples; the
         question is a `Choice`, `Score` or `Noul` and the answer is anything `answer_target` accepts, soft
         distributions included (for instance the answers of `KV.teach`). Returns a head for
-        `KV.decide(..., head=head)`; `out` saves it to a .npz file."""
+        `KV.decide(..., head=head)`; `out` saves it to a .npz file. `layout="per-question"` (default) embeds
+        the state with every question; "state-once" embeds each state once and puts the question in the option
+        texts: about six times faster at decision time, a few points less accurate (see the results)."""
+        import numpy as np
+
+        if layout not in ("state-once", "per-question"):
+            raise ValueError(f"unknown layout {layout!r}")
         from .catalog import QUERY_TEMPLATE
         from .train import fit_head_grouped
         template = self.query_template or QUERY_TEMPLATE
-        texts, row, states, candidates, targets = [], {}, [], [], []
+        texts, row, candidates, targets = [], {}, [], []
+        srow, stexts, sidx = {}, [], []
         for state, q, answer in examples:
-            keys, opt_texts, instructions = question_options(q)
+            keys, opt_texts, instructions = catalog_texts(q, layout)
             for t in opt_texts:
                 if t not in row:
                     row[t] = len(texts)
                     texts.append(t)
             candidates.append([row[t] for t in opt_texts])
             targets.append(answer_target(q, keys, answer))
-            states.append(template.format(question=instructions or "", state=render_state(state)))
-        head = fit_head_grouped(self.encoder(states), self.encoder(texts), candidates, targets, **fit_kw)
+            question = STATE_INSTRUCTION if layout == "state-once" else instructions or ""
+            state_text = template.format(question=question, state=render_state(state))
+            if state_text not in srow:
+                srow[state_text] = len(stexts)
+                stexts.append(state_text)
+            sidx.append(srow[state_text])
+        S = self.encoder(stexts)
+        head = fit_head_grouped(S[np.asarray(sidx)], self.encoder(texts), candidates, targets, **fit_kw)
+        head.report["layout"] = layout
         if out:
             head.save(out)
         return head
@@ -577,10 +592,16 @@ class KV:
         t0 = time.perf_counter()
         template = self.query_template or QUERY_TEMPLATE
         scale = float(head.report.get("scale", 30.0))
+        layout = head.report.get("layout", "per-question")
         items = [(qid, _coerce(q)) for qid, q in questions.items()]
-        opts = [question_options(q) for _, q in items]
-        queries = [template.format(question=ins or "", state=render_state(state)) for _, _, ins in opts]
-        zs = head.state(self.encoder(queries))
+        opts = [catalog_texts(q, layout) for _, q in items]
+        if layout == "state-once":
+            state_text = template.format(question=STATE_INSTRUCTION, state=render_state(state))
+            z = head.state(self.encoder([state_text]))[0]
+            zs = [z] * len(items)
+        else:
+            queries = [template.format(question=ins or "", state=render_state(state)) for _, _, ins in opts]
+            zs = head.state(self.encoder(queries))
         cache = self.__dict__.setdefault("_option_vectors", {})
         missing = sorted({t for _, texts, _ in opts for t in texts if t not in cache})
         if missing:
@@ -626,6 +647,16 @@ class KV:
                              labels=["Yes", "No"], noun="answer", warm=warm)
             return q, idx, q.instructions
         raise ValueError(f"unknown question type {q.type!r}")
+
+
+STATE_INSTRUCTION = "Answer the questions about this state"
+
+def catalog_texts(q: Any, layout: str) -> tuple[list[str], list[str], str]:
+    """Option keys, option texts and instructions of a typed question for the trained catalogue in `layout`."""
+    keys, texts, instructions = question_options(q)
+    if layout == "state-once" and instructions:
+        texts = [instructions + "\n" + t for t in texts]
+    return keys, texts, instructions
 
 
 def question_options(q: Any) -> tuple[list[str], list[str], str]:

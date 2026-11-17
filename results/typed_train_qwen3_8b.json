@@ -95,5 +95,106 @@
       "total_s": 608.5420189999995,
       "teacher_s": 2531.272651
     }
+  },
+  "typed-once/catalogue": {
+    "acc": 0.31,
+    "ms": 8.739599998807535,
+    "ms_per_case": 43.69799999403767,
+    "decisions": 2000,
+    "by_type": {
+      "choice": 0.31166666666666665,
+      "noul": 0.42333333333333334,
+      "score": 0.22375
+    }
+  },
+  "typed-once/trained-hard": {
+    "acc": 0.6595,
+    "ms": 8.898140001110733,
+    "ms_per_case": 44.49070000555366,
+    "decisions": 2000,
+    "by_type": {
+      "choice": 0.65,
+      "noul": 0.7716666666666666,
+      "score": 0.5825
+    },
+    "train": {
+      "val_start": 0.31166666666666665,
+      "val_best": 0.75,
+      "best_epoch": 37,
+      "train_s": 143.4836270000087,
+      "train_examples": 5400,
+      "val_examples": 600,
+      "scale": 30.0,
+      "layout": "state-once",
+      "total_s": 236.0756451000052
+    }
+  },
+  "typed-once/trained-soft": {
+    "acc": 0.6715,
+    "ms": 8.878820002428256,
+    "ms_per_case": 44.39410001214128,
+    "decisions": 2000,
+    "by_type": {
+      "choice": 0.665,
+      "noul": 0.7616666666666667,
+      "score": 0.60875
+    },
+    "train": {
+      "val_start": 0.31166666666666665,
+      "val_best": 0.765,
+      "best_epoch": 27,
+      "train_s": 143.77148889997625,
+      "train_examples": 5400,
+      "val_examples": 600,
+      "scale": 30.0,
+      "layout": "state-once",
+      "total_s": 235.47198219998972
+    }
+  },
+  "typed-once/trained-teacher-qwen3_8b": {
+    "acc": 0.487,
+    "ms": 8.89716999954544,
+    "ms_per_case": 44.4858499977272,
+    "decisions": 2000,
+    "by_type": {
+      "choice": 0.4583333333333333,
+      "noul": 0.6266666666666667,
+      "score": 0.40375
+    },
+    "train": {
+      "val_start": 0.26,
+      "val_best": 0.845,
+      "best_epoch": 28,
+      "train_s": 148.61396679998143,
+      "train_examples": 5400,
+      "val_examples": 600,
+      "scale": 30.0,
+      "layout": "state-once",
+      "total_s": 240.09224440000253,
+      "teacher_s": 359.7958604999876
+    }
+  },
+  "typed-once/trained-teacher-ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S": {
+    "acc": 0.608,
+    "ms": 8.90681000018958,
+    "ms_per_case": 44.5340500009479,
+    "decisions": 2000,
+    "by_type": {
+      "choice": 0.6316666666666667,
+      "noul": 0.695,
+      "score": 0.525
+    },
+    "train": {
+      "val_start": 0.30333333333333334,
+      "val_best": 0.7883333333333333,
+      "best_epoch": 37,
+      "train_s": 147.28612400000566,
+      "train_examples": 5400,
+      "val_examples": 600,
+      "scale": 30.0,
+      "layout": "state-once",
+      "total_s": 238.71544470000663,
+      "teacher_s": 2531.272651
+    }
   }
 }

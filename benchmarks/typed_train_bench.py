@@ -102,6 +102,7 @@ def main():
     parser.add_argument("--n-ctx", type=int, default=8192)
     parser.add_argument("--kv-type", default="q8_0")
     parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument("--layout", default="per-question", choices=["state-once", "per-question"])
     a = parser.parse_args()
     out_name = "typed_train_qwen3_8b.json"
     res = load_json(out_name)
@@ -117,26 +118,29 @@ def main():
         z = np.zeros((d, 1), dtype=np.float32)
 
         def log(name, row):
-            res[f"typed/{name}"] = row
+            prefix = "typed" if a.layout == "per-question" else "typed-once"
+            res[f"{prefix}/{name}"] = row
             save_json(out_name, res)
             print(f"{name:<28} {row}", flush=True)
 
-        log("catalogue", evaluate(kv, Head(z, z, z, z, {"scale": 30.0}), test))
+        identity_head = Head(z, z, z, z, {"scale": 30.0, "layout": a.layout})
+        log("catalogue", evaluate(kv, identity_head, test))
         for name, soft in (("trained-hard", False), ("trained-soft", True)):
             t0 = time.perf_counter()
-            head = kv.train_questions(gold_examples(train, soft))
+            head = kv.train_questions(gold_examples(train, soft), layout=a.layout)
             row = evaluate(kv, head, test)
             row["train"] = dict(head.report, total_s=time.perf_counter() - t0)
             log(name, row)
         for t, data in taught.items():
             ex = [(x["state"], x["question"], x["answer"]) for x in data["labels"]]
             t0 = time.perf_counter()
-            head = kv.train_questions(ex)
+            head = kv.train_questions(ex, layout=a.layout)
             row = evaluate(kv, head, test)
             row["train"] = dict(head.report, total_s=time.perf_counter() - t0, teacher_s=data["seconds"])
             log("trained-teacher-" + t.replace("hf.co/", "").replace(":", "_").replace("/", "_"), row)
     finally:
         kv.close()
+
 
 
 if __name__ == "__main__":

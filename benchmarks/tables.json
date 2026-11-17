@@ -339,6 +339,16 @@
           "@typed_train#typed/trained-teacher-ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S|acc_ms"
         ],
         [
+          "Same, state embedded once (`layout=\"state-once\"`), official distributions",
+          "6,000 human labels (soft)",
+          "@typed_train#typed-once/trained-soft|acc_ms"
+        ],
+        [
+          "Same, state embedded once, answers of Qwen3.8-27B",
+          "none",
+          "@typed_train#typed-once/trained-teacher-ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S|acc_ms"
+        ],
+        [
           "*kvindex with Qwen3-8B, no catalogue*",
           "none",
           "@baselines#typed/all/kvindex-state|acc_ms"

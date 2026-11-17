@@ -248,6 +248,8 @@ decisions); the trained catalogue answers alone, with no LLM call.
 | **Catalogue alone, trained on the official distributions** | 6,000 human labels (soft) | 75.6% · 57 ms |
 | Catalogue alone, trained on the answers of Qwen3-8B (`kv.teach`) | none (the 8B labels the training states in 6 min) | 50.4% · 57 ms |
 | Catalogue alone, trained on the answers of Qwen3.8-27B (`kv.teach`) | none (the 27B labels the training states in 42 min) | 66.6% · 57 ms |
+| Same, state embedded once (`layout="state-once"`), official distributions | 6,000 human labels (soft) | 67.2% · 9 ms |
+| Same, state embedded once, answers of Qwen3.8-27B | none | 60.8% · 9 ms |
 | *kvindex with Qwen3-8B, no catalogue* | none | 56.7% · 41 ms |
 | *kvindex with Qwen3.8-27B, no catalogue* | none | 70.4% · 193 ms |
 | *CLM-8B, heads fine-tuned* | 6,000 human labels | 71.0% · 79 ms |
@@ -260,6 +262,10 @@ decisions); the trained catalogue answers alone, with no LLM call.
    prompt they labelled with). For the 27B this replaces 188 to 249 ms per decision with 57 ms, after a labelling
    pass of 42 minutes done once.
 3. Training took 10 minutes, of which a little over 2 minutes of optimisation; the rest is embedding the examples.
+4. `layout="state-once"` embeds the state once per call and puts each question in its option texts (cached): about
+   six times faster (9 ms against 57 ms per decision), but 6 to 8 points less accurate, because one state vector
+   compared with options that contain the question captures the relation between question and state less well. The
+   default stays the per-question layout.
 
 ### Cascade: trained catalogue first, LLM for the uncertain answers
 
