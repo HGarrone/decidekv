@@ -14,7 +14,8 @@ keywords = ["llm", "local-llm", "llama-cpp", "ollama", "kv-cache", "classificati
 dependencies = []
 
 [project.optional-dependencies]
-llamacpp = ["llama-cpp-python>=0.3.36", "numpy>=1.24", "jinja2>=3.0"]
+# llama-cpp-python 0.3.37 does not load with the llama.cpp build b11312 (llama_model_dflash_variant missing)
+llamacpp = ["llama-cpp-python>=0.3.36,<0.3.37", "numpy>=1.24", "jinja2>=3.0"]
 catalog = ["numpy>=1.24"]
 bench = ["numpy>=1.24", "nltk>=3.8", "pandas>=2.0", "pyarrow>=14", "torch>=2.1", "matplotlib>=3.8"]
 dev = ["pytest", "numpy>=1.24"]

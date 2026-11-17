@@ -39,16 +39,46 @@ def ollama_gguf(name: str) -> str:
     tag = tag or "latest"
     parts = model.split("/")
     if len(parts) == 1:
-        parts = ["registry.ollama.ai", "library", parts[0]]
+        v1 = ["registry.ollama.ai", "library", parts[0]]
+        v2 = ["ollama.com", "library", parts[0]]
     elif len(parts) == 2:
-        parts = ["registry.ollama.ai"] + parts
-    man = os.path.join(ollama_models_dir(), "manifests", *parts, tag)
-    if not os.path.isfile(man):
-        raise FileNotFoundError(f"Ollama manifest not found for {name!r} ({man}). Run `ollama pull {name}` "
-                                "or pass a .gguf path.")
-    layers = json.load(open(man))["layers"]
-    digest = next(layer["digest"] for layer in layers if layer["mediaType"].endswith(".model"))
+        v1 = ["registry.ollama.ai"] + parts
+        v2 = ["ollama.com"] + parts
+    else:
+        v1 = parts
+        v2 = parts
+    root = ollama_models_dir()
+    candidates = [os.path.join(root, "manifests", *v1, tag), os.path.join(root, "manifests-v2", *v2, tag)]
+    man = next((p for p in candidates if os.path.isfile(p)), None)
+    if man is None:
+        man = _find_ci(root, ["manifests-v2", *v2, tag])
+    if man is None:
+        man = _find_ci(root, ["manifests", *v1, tag])
+    if man is None:
+        raise FileNotFoundError(f"Ollama manifest not found for {name!r} (looked in {candidates[0]} and "
+                                f"{candidates[1]}). Run `ollama pull {name}` or pass a .gguf path.")
+    with open(man, encoding="utf8") as f:
+        layers = json.load(f)["layers"]
+    model_layer = next((layer for layer in layers if layer["mediaType"] == "application/vnd.ollama.image.model"),
+                       None)
+    if model_layer is None:
+        model_layer = next((layer for layer in layers if layer["mediaType"].endswith(".model")), None)
+    digest = model_layer["digest"]
     return os.path.join(ollama_models_dir(), "blobs", digest.replace(":", "-"))
+
+
+def _find_ci(root: str, parts: list[str]) -> str | None:
+    """Path under `root` made of `parts`, matching every folder and file name without regard to case, or None."""
+    path = root
+    for part in parts:
+        if not os.path.isdir(path):
+            return None
+        names = os.listdir(path)
+        hit = next((n for n in names if n.lower() == part.lower()), None)
+        if hit is None:
+            return None
+        path = os.path.join(path, hit)
+    return path if os.path.isfile(path) else None
 
 
 def _prepare_dlls():

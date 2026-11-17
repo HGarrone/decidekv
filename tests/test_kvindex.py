@@ -1,4 +1,5 @@
 """Offline tests: a fake Ollama client stands in for the server."""
+import json
 import math
 import os
 import sys
@@ -527,3 +528,33 @@ def test_server_pick_option():
     assert srv.sent[0][1]["grammar"] == 'root ::= "lost card" | "refund"'
     with pytest.raises(NotImplementedError):
         srv.score_options(["s", "q"], ["a", "b"])
+
+
+def write_manifest(path, layers):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"layers": layers}), encoding="utf8")
+
+
+def test_ollama_gguf_v1_and_v2_layouts(tmp_path, monkeypatch):
+    from kvindex.llamacpp import ollama_gguf
+    monkeypatch.setenv("OLLAMA_MODELS", str(tmp_path))
+    write_manifest(tmp_path / "manifests" / "registry.ollama.ai" / "library" / "qwen3" / "8b",
+                  [{"mediaType": "application/vnd.ollama.image.model", "digest": "sha256:aaa"}])
+    write_manifest(tmp_path / "manifests-v2" / "ollama.com" / "library" / "mine" / "latest",
+                  [{"mediaType": "application/vnd.ollama.image.model", "digest": "sha256:bbb"}])
+    write_manifest(tmp_path / "manifests-v2" / "hf.co" / "user" / "repo-gguf" / "iq2_s",
+                  [{"mediaType": "application/vnd.ollama.image.model", "digest": "sha256:ccc"}])
+    assert ollama_gguf("qwen3:8b") == os.path.join(str(tmp_path), "blobs", "sha256-aaa")
+    assert ollama_gguf("mine") == os.path.join(str(tmp_path), "blobs", "sha256-bbb")
+    assert ollama_gguf("hf.co/user/repo-GGUF:IQ2_S") == os.path.join(str(tmp_path), "blobs", "sha256-ccc")
+    with pytest.raises(FileNotFoundError):
+        ollama_gguf("missing:1b")
+
+
+def test_ollama_gguf_vision_model_skips_projector(tmp_path, monkeypatch):
+    from kvindex.llamacpp import ollama_gguf
+    monkeypatch.setenv("OLLAMA_MODELS", str(tmp_path))
+    write_manifest(tmp_path / "manifests-v2" / "ollama.com" / "library" / "vis" / "iq2_s",
+                  [{"mediaType": "application/vnd.ollama.image.projector", "digest": "sha256:proj"},
+                   {"mediaType": "application/vnd.ollama.image.model", "digest": "sha256:model"}])
+    assert ollama_gguf("vis:iq2_s") == os.path.join(str(tmp_path), "blobs", "sha256-model")
