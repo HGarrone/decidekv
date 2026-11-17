@@ -28,7 +28,7 @@ decision, and how both change when the list grows.
 
 ## What the tool does
 
-![The two regimes of DecideKV](fig_mechanism.png)
+![Overview of DecideKV: cached list, embedding catalogue, prefix tree, trained head with fallback and cascade](fig_mechanism.png)
 
 **Cached list.** The prompt starts with the instructions and the whole list of options, followed by the state and
 the question. In a causal LLM the keys and values of a token depend only on the tokens before it, so the cache of

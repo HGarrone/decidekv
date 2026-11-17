@@ -107,6 +107,15 @@ differences in Section~\ref{sec:related}.
 
 \section{Method}
 
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.92\linewidth]{fig_mechanism.png}
+\caption{Overview of \dkv. Top: up to 3{,}000 options the list is a resident prefix and every decision computes only
+the new tokens. Middle: for larger lists an embedding catalogue picks 50 candidates for the LLM. Bottom: many
+questions about one state are answered as a prefix tree in one forward pass; with a trained head, the LLM is called
+only for answers outside the head's field (fallback) or below a confidence threshold (cascade).}\label{fig:overview}
+\end{figure}
+
 \subsection{Typed decisions}
 A decision is a state $s$ (any text or structured object) and a question $q$ with an option list $O_q$. A
 \texttt{Choice} picks one option; a \texttt{Score} picks one of $n$ levels described by criteria; a \texttt{Noul}
@@ -187,8 +196,16 @@ z_s = \frac{x_s + (x_s U_s) V_s^\top}{\lVert \cdot \rVert},\qquad
 z_o = \frac{x_o + (x_o U_o) V_o^\top}{\lVert \cdot \rVert},\qquad
 p(o\mid s) = \operatorname{softmax}_{o\in C(s)}\!\big(\tau\, z_s^\top z_o\big),
 \end{equation}
-with rank 64, $V$ initialised at zero and $\tau=30$. For typed questions every example has its own candidate set
-$C(s)$ (the options of its question) and a \emph{soft} target distribution $t$: a one-hot vector for a hard label, the
+Here $x_s, x_o \in \mathbb{R}^{d}$ are the embedding vectors of the state text and of an option text ($d=2{,}560$ for
+Qwen3-Embedding-4B). $U_s, V_s$ (for states) and $U_o, V_o$ (for options) are the trained parameters: matrices of
+size $d \times r$ with rank $r=64$, so that $(x U)V^\top$ is a low-rank correction added to the original vector
+(about 650{,}000 parameters in total). $V_s$ and $V_o$ start at zero, so before training $z_s$ and $z_o$ are the
+original embeddings and the trained catalogue starts exactly from the untrained one. The denominator
+$\lVert\cdot\rVert$ is the Euclidean norm of the numerator: it rescales the corrected vector to length one, so that
+$z_s^\top z_o$ is the cosine similarity between the corrected state and option. $\tau=30$ is a fixed temperature
+that turns cosines (between $-1$ and $1$) into well-separated logits, and $C(s)$ is the set of candidate options
+of the example. For typed questions every example has its own candidate set (the options of its question) and a
+\emph{soft} target distribution $t$: a one-hot vector for a hard label, the
 official distribution of a dataset, or the probabilities that an LLM assigns to every option. The loss is the
 cross-entropy $-\sum_o t_o \log p(o\mid s)$ (an InfoNCE-style objective~\citep{infonce,clip} over per-example
 candidates), optimised with Adam in numpy; the weights of the best validation epoch are kept. The LLM is never
@@ -202,8 +219,15 @@ option without examples and disagrees with the trained one, the LLM chooses amon
 catalogue. A head trained on every option never falls back.
 
 \subsection{Confidence cascade}\label{sec:cascade}
-With a trained head and a threshold $T$, the catalogue answers every question and the questions whose answer has a
-confidence $1-H(p)/\log|C|$ below $T$ are asked to the LLM in one call (through the prefix tree).
+With a trained head and a threshold $T \in [0, 1]$, the catalogue answers every question, and the questions whose
+answer has a confidence below $T$ are asked to the LLM in one call (through the prefix tree). The confidence of an
+answer with probabilities $p = (p_1, \dots, p_{|C|})$ over its $|C|$ options is
+\begin{equation}
+\mathrm{conf}(p) = 1 - \frac{H(p)}{\log |C|}, \qquad H(p) = -\sum_{i=1}^{|C|} p_i \log p_i ,
+\end{equation}
+where $H(p)$ is the entropy of the answer distribution and $\log|C|$ its maximum value (all options equally likely):
+the confidence is 1 when all the probability is on one option and 0 when it is spread evenly (the definition used by
+OpenJev). For example, $p=(0.02, 0.15, 0.83)$ over three levels gives a confidence of 0.53.
 
 \subsection{Engines}
 The default engine runs llama.cpp in the Python process on the GGUF files downloaded by Ollama. A
@@ -235,18 +259,19 @@ a training set exists. With a trained catalogue \dkv{} is ahead of fine-tuned CL
 
 \begin{table}[t]
 \centering\small
-\caption{Accuracy $\cdot$ median time per decision on Qwen3-8B. ``--'': not applicable or not measured.}\label{tab:comparison}
+\caption{Accuracy $\cdot$ median time per decision on Qwen3-8B. Bold: the best accuracy and the lowest time of
+each column. ``--'': not applicable or not measured.}\label{tab:comparison}
 \begin{tabular}{lllll}
 \toprule
 Method & Banking77 & WordNet-200 & Typed Decisions & Aim game (won) \\
 \midrule
-\dkv & 60.7\% $\cdot$ 65\ms & 70.7\% $\cdot$ 38\ms & 56.7\% $\cdot$ 41\ms & 95.0\% $\cdot$ 159\ms \\
-\dkv, trained catalogue & \textbf{93.0\%} $\cdot$ 16\ms & -- & \textbf{75.6\%} $\cdot$ 57\ms & -- \\
+\dkv & 60.7\% $\cdot$ 65\ms & \textbf{70.7\%} $\cdot$ 38\ms & 56.7\% $\cdot$ \textbf{41\ms} & \textbf{95.0\%} $\cdot$ 159\ms \\
+\dkv, trained catalogue & \textbf{93.0\%} $\cdot$ \textbf{16\ms} & -- & \textbf{75.6\%} $\cdot$ 57\ms & -- \\
 OpenJev architecture & 39.7\% $\cdot$ 90\ms & 63.3\% $\cdot$ 132\ms & 59.3\% $\cdot$ 67\ms & 25.0\% $\cdot$ 423\ms \\
 OpenJev library (Ollama) & 44.0\% $\cdot$ 117\ms & 22.7\% $\cdot$ 164\ms & 58.1\% $\cdot$ 62\ms & 25.0\% $\cdot$ 469\ms \\
-CLM-8B as released & 4.3\% $\cdot$ 35\ms & 12.7\% $\cdot$ 21\ms & 36.8\% $\cdot$ 79\ms & 15.0\% $\cdot$ 124\ms \\
-CLM-8B, heads fine-tuned & 84.3\% $\cdot$ 21\ms & 26.0\% $\cdot$ 21\ms & 71.0\% $\cdot$ 79\ms & -- \\
-Embedding model alone & 65.7\% $\cdot$ 16\ms & -- & -- & -- \\
+CLM-8B as released & 4.3\% $\cdot$ 35\ms & 12.7\% $\cdot$ \textbf{21\ms} & 36.8\% $\cdot$ 79\ms & 15.0\% $\cdot$ \textbf{124\ms} \\
+CLM-8B, heads fine-tuned & 84.3\% $\cdot$ 21\ms & 26.0\% $\cdot$ \textbf{21\ms} & 71.0\% $\cdot$ 79\ms & -- \\
+Embedding model alone & 65.7\% $\cdot$ \textbf{16\ms} & -- & -- & -- \\
 Embedding top-50, then LLM & 56.3\% $\cdot$ 127\ms & -- & -- & -- \\
 Cross-encoder (30 messages) & 70.0\% $\cdot$ 1{,}589\ms & -- & -- & -- \\
 \bottomrule
@@ -267,13 +292,14 @@ to Qwen3-8B.
 
 \begin{table}[t]
 \centering\small
-\caption{Qwen3.8-27B (hybrid, IQ2\_S), context of 8{,}192 tokens for Typed Decisions and the aim game.}\label{tab:hybrid}
+\caption{Qwen3.8-27B (hybrid, IQ2\_S), context of 8{,}192 tokens for Typed Decisions and the aim game. Bold:
+the best accuracy and the lowest time of each column.}\label{tab:hybrid}
 \begin{tabular}{lllll}
 \toprule
 Method & Banking77 & WordNet-200 & Typed Decisions & Aim game (won) \\
 \midrule
-\dkv & 73.0\% $\cdot$ 161\ms & 82.7\% $\cdot$ 106\ms & 70.4\% $\cdot$ 193\ms & 100\% $\cdot$ 340\ms \\
-OpenJev architecture & 45.7\% $\cdot$ 409\ms & 84.0\% $\cdot$ 600\ms & 69.1\% $\cdot$ 307\ms & $>$2\,h, stopped \\
+\dkv & \textbf{73.0\%} $\cdot$ \textbf{161\ms} & 82.7\% $\cdot$ \textbf{106\ms} & \textbf{70.4\%} $\cdot$ \textbf{193\ms} & \textbf{100\%} $\cdot$ \textbf{340\ms} \\
+OpenJev architecture & 45.7\% $\cdot$ 409\ms & \textbf{84.0\%} $\cdot$ 600\ms & 69.1\% $\cdot$ 307\ms & $>$2\,h, stopped \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -311,14 +337,14 @@ outside the batch.
 
 \begin{table}[t]
 \centering\small
-\caption{Prompt order on Typed Decisions (2{,}000 decisions).}\label{tab:order}
+\caption{Prompt order on Typed Decisions (2{,}000 decisions). Bold: the best accuracy and the lowest time of each column.}\label{tab:order}
 \begin{tabular}{lll}
 \toprule
 & Qwen3-8B & Qwen3.8-27B \\
 \midrule
 Options first, one question per call & 51.1\% $\cdot$ 62\ms & 69.6\% $\cdot$ 249\ms \\
-State first, five questions per call (prefix tree) & 56.7\% $\cdot$ 41\ms & 70.4\% $\cdot$ 193\ms \\
-OpenJev architecture & 59.3\% $\cdot$ 67\ms & 69.1\% $\cdot$ 307\ms \\
+State first, five questions per call (prefix tree) & 56.7\% $\cdot$ \textbf{41\ms} & \textbf{70.4\%} $\cdot$ \textbf{193\ms} \\
+OpenJev architecture & \textbf{59.3\%} $\cdot$ 67\ms & 69.1\% $\cdot$ 307\ms \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -349,7 +375,7 @@ teacher (69.6\%), at 57\ms{} per decision instead of 188--249\ms.
 
 \begin{table}[t]
 \centering\small
-\caption{Trained catalogue on Typed Decisions (catalogue alone, no LLM call unless stated).}\label{tab:typed}
+\caption{Trained catalogue on Typed Decisions (catalogue alone, no LLM call unless stated). Bold: the best accuracy and the lowest time.}\label{tab:typed}
 \begin{tabular}{lll}
 \toprule
 Catalogue & Labels & Accuracy $\cdot$ time \\
@@ -359,7 +385,7 @@ Trained, hard labels & 6{,}000 human & 75.4\% $\cdot$ 57\ms \\
 Trained, soft labels & 6{,}000 human & \textbf{75.6\%} $\cdot$ 57\ms \\
 Trained on Qwen3-8B's answers & none & 50.4\% $\cdot$ 57\ms \\
 Trained on Qwen3.8-27B's answers & none & 66.6\% $\cdot$ 57\ms \\
-State embedded once, soft labels & 6{,}000 human & 67.2\% $\cdot$ 9\ms \\
+State embedded once, soft labels & 6{,}000 human & 67.2\% $\cdot$ \textbf{9\ms} \\
 \midrule
 \dkv{} with Qwen3-8B (LLM) & none & 56.7\% $\cdot$ 41\ms \\
 \dkv{} with Qwen3.8-27B (LLM) & none & 70.4\% $\cdot$ 193\ms \\
@@ -379,12 +405,18 @@ LLM, every question sent to the LLM lowers the accuracy: a cascade pays when the
 the encoder do not fit together in 12\,GB, so the cascade was run in two phases with the same arithmetic.)
 
 \subsection{Negative results}
-\textbf{Embedding the state once} per call and putting the question in the cached option texts is 6.4 times faster
-(9\ms{} per decision) but loses 6--8 points; it is an option, not the default. \textbf{Linear heads on the LLM's last
-hidden state} of the state, one per question, reach 68.9\% in 14\ms{} on Qwen3-8B and 66.7\% in 52\ms{} on the 27B:
-below fine-tuned CLM-8B (whose method this essentially is) and below the trained catalogue, so we did not include
-them. \textbf{An identity regulariser} on the low-rank correction improved intents without examples only from 15\% to
-28\% at best, and \textbf{the confidence margin} could not flag the head's errors on those intents.
+\begin{itemize}
+\item \textbf{Embedding the state once} per call and putting the question in the cached option texts is 6.4 times
+faster (9\ms{} per decision) but loses 6--8 points of accuracy (67.2\% instead of 75.6\% with human labels); it is
+an option, not the default.
+\item \textbf{Linear heads on the LLM's last hidden state} of the state, one per question, reach 68.9\% in 14\ms{}
+on Qwen3-8B and 66.7\% in 52\ms{} on the 27B: below fine-tuned CLM-8B (whose method this essentially is) and below
+the trained catalogue, so we did not include them.
+\item \textbf{An identity regulariser} on the low-rank correction improved the accuracy on intents without examples
+only from 15\% to 28\% at best.
+\item \textbf{The confidence margin} between the first and the second option could not flag the head's errors on
+intents without examples: those errors are made with high confidence.
+\end{itemize}
 
 \section{Limitations}
 Probabilities computed by llama.cpp depend on how the prompt is split into batches (the kernels are not

@@ -1,5 +1,5 @@
 """
-Diagram of the two regimes of decidekv (cached list, embedding catalogue).
+Diagram of DecideKV: cached list, embedding catalogue, prefix tree, trained head with fallback and cascade.
 
     python paper/diagram.py
 
@@ -17,7 +17,7 @@ from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Rectangle  # noq
 OUT = os.path.dirname(os.path.abspath(__file__))
 INK, INK2, LINE, SURF = "#0b0b0b", "#52514e", "#8d8c86", "#fcfcfb"
 COMPUTED, CACHED, TRAINED, NEUTRAL = "#d6e6f8", "#d3f0e4", "#fbdccd", "#efeee9"
-BLUE, GREEN = "#2a78d6", "#1baf7a"
+BLUE, GREEN, ORANGE = "#2a78d6", "#1baf7a", "#c2571a"
 
 
 def canvas(w, h, xlim, ylim, dpi):
@@ -49,7 +49,8 @@ def arrow(ax, a, b, text="", color=INK2, tx=0, ty=0, fs=7):
 
 
 def draw(name, dpi):
-    fig, ax = canvas(10, 8.4, 100, 84, dpi)
+    fig, ax = canvas(10, 12.6, 100, 84, dpi)
+    ax.set_ylim(-42, 84)
     
     # Background bands
     ax.add_patch(Rectangle((1, 44.5), 98, 38.5, fc="#f3f6fa", ec="none", zorder=0))
@@ -109,6 +110,33 @@ def draw(name, dpi):
     # Footer text
     ax.text(50, 4.0, "With a trained catalogue the closest option is returned directly: no LLM call.",
             fontsize=7.4, color=INK2, ha="center", va="center", zorder=1)
+
+    # Third band: many questions about one state, and the trained head with fallback and cascade
+    ax.add_patch(Rectangle((1, -41), 98, 40, fc="#fbf4ee", ec="none", zorder=0))
+    ax.text(2.5, -3.4, "MANY QUESTIONS ABOUT ONE STATE · a prefix tree evaluated in one forward pass",
+            fontsize=8.5, weight="bold", color=ORANGE, ha="left", va="center", zorder=1)
+    ax.text(2.5, -7.4, "at every message", fontsize=7, color=INK2, style="italic", ha="left", va="center", zorder=1)
+    box(ax, 13, -14, 21, 10, "State", "computed once,\nresident for the call", num=16, fill=CACHED)
+    box(ax, 38, -14, 21, 10, "Shared option blocks", "instructions + options,\nonce per list", num=17,
+        fill=COMPUTED)
+    box(ax, 63, -14, 21, 10, "All the questions", "parallel sequences,\none llama_decode", num=18, fill=COMPUTED)
+    box(ax, 87.5, -14, 21, 10, "Answers", "probability of every\nlevel or yes / no", num=19)
+    arrow(ax, (23.5, -14), (27.5, -14))
+    arrow(ax, (48.5, -14), (52.5, -14))
+    arrow(ax, (73.5, -14), (77, -14))
+    ax.text(2.5, -22.2, "with a trained head (optional)", fontsize=7, color=INK2, style="italic", ha="left",
+            va="center", zorder=1)
+    box(ax, 13, -31, 21, 10, "Trained head", "answers every question\nin milliseconds", num=20, fill=TRAINED)
+    box(ax, 38, -31, 21, 10, "Sure and in its field?", "confidence ≥ threshold,\noption had examples",
+        num=21)
+    box(ax, 64, -26.3, 23, 6.6, "yes: the head's answer", "no LLM call", fs=7.0)
+    box(ax, 64, -36, 23, 6.6, "no: the LLM decides", "fallback / cascade, via the tree", fill=COMPUTED, fs=7.0)
+    box(ax, 89, -31, 16, 10, "Answer", "one per question", num=22)
+    arrow(ax, (23.5, -31), (27.5, -31))
+    arrow(ax, (48.5, -29.5), (52.5, -26.8))
+    arrow(ax, (48.5, -32.5), (52.5, -35.5))
+    arrow(ax, (75.5, -26.8), (81, -29.5))
+    arrow(ax, (75.5, -35.5), (81, -32.5))
 
     # Save
     fig.savefig(os.path.join(OUT, name), facecolor=SURF, bbox_inches="tight", pad_inches=0.05, dpi=dpi)
