@@ -17,7 +17,7 @@
 \newcommand{\ms}{\,ms}
 
 \title{\dkv: a Free, Ready-to-Use Tool for Fast Typed Decisions\\with Any Local LLM}
-\author{Hobey Garrone\\Independent researcher}
+\author{Hobey Garrone\\Independent researcher\\\small\url{https://doi.org/10.5281/zenodo.24323634}}
 \date{November 2026}
 
 \begin{document}
@@ -33,7 +33,7 @@ letting the LLM label the states. Under equal conditions on one consumer GPU (sa
 data), \dkv{} is 1.4 to 5.7 times faster than the OpenJev architecture and at least as accurate on six of the seven
 task--model pairs we could compare (Banking77 with Qwen3-8B: 63.0\% in 64\ms{} against 39.7\% in 90\ms); it scales to
 30{,}000 options where OpenJev stops at 255; with a catalogue trained in minutes it reaches 93.0\% on Banking77 in
-16\ms{} and 75.6\% on Typed Decisions without any LLM call, above CLM-8B with heads fine-tuned on the same tasks. The
+15\ms{} and 75.6\% on Typed Decisions without any LLM call, above CLM-8B with heads fine-tuned on the same tasks. The
 speed comes from organising the work around the KV cache: option lists stay resident in the cache across states, and
 the questions about one state share it through a prefix tree evaluated in one forward pass (a turn of 15 questions on
 a 27B hybrid model: from 11.2\,s to 1.4\,s with a long state). We report the weaknesses too: where it is less accurate,
@@ -592,7 +592,7 @@ comparisons, it scales to tens of thousands of options, it needs no training, an
 like CLM---from human labels or from the LLM itself---to answer in milliseconds without calling the LLM. Its weaknesses
 are stated above and in the repository. Treating typed decisions as a KV-cache problem---keep what is shared, compute
 what changes, branch where questions diverge---is the idea behind it. The library, the benchmarks and every result file
-are at \url{https://github.com/HGarrone/decidekv}.
+are at \url{https://github.com/HGarrone/decidekv}; this version is archived on Zenodo, \url{https://doi.org/10.5281/zenodo.24323634}.
 
 \paragraph{Use of AI assistants.} The code of the library was written by a local code model (qwen3-coder-30B) under
 the author's direction; an AI assistant (Claude) helped with the design, the verification of the code and of the

@@ -1,5 +1,7 @@
 # DecideKV: a tool for fast decisions over many options with a local LLM
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24323634.svg)](https://doi.org/10.5281/zenodo.24323634)
+
 ## Summary
 
 Many programs need the same small decision again and again: given a state, pick one option out of a list. A

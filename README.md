@@ -1,5 +1,7 @@
 # DecideKV
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24323634.svg)](https://doi.org/10.5281/zenodo.24323634)
+
 **Fast decisions over many options with a local LLM.**
 
 `decidekv` picks one option out of a list for a given state (a message, a definition, the state of a game) with
@@ -650,6 +652,21 @@ benchmarks/     baselines.py (comparison), scale.py (growing lists), train_bench
                 checks.py (correctness checks to run first), report.py (tables)
 results/        raw results of every benchmark
 paper/          article and figures
+```
+
+## Citing
+
+If you use DecideKV, please cite the preprint ([doi:10.5281/zenodo.24323634](https://doi.org/10.5281/zenodo.24323634)):
+
+```bibtex
+@misc{garrone2026decidekv,
+  title     = {DecideKV: a Free, Ready-to-Use Tool for Fast Typed Decisions with Any Local LLM},
+  author    = {Garrone, Hobey},
+  year      = {2026},
+  publisher = {Zenodo},
+  doi       = {10.5281/zenodo.24323634},
+  url       = {https://doi.org/10.5281/zenodo.24323634}
+}
 ```
 
 ## License
