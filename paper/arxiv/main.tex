@@ -30,13 +30,13 @@ be versatile and ready to use: one call, any GGUF model that llama.cpp runs (hyb
 from two to tens of thousands of options, and the \texttt{Choice}/\texttt{Score}/\texttt{Noul} question types of
 OpenJev. It works without any training, and it can be trained like CLM when examples exist---or without examples, by
 letting the LLM label the states. Under equal conditions on one consumer GPU (same model, engine, prompt blocks and
-data), \dkv{} is 1.4 to 5.7 times faster than the OpenJev architecture and at least as accurate on five of the seven
-task--model pairs we could compare (Banking77 with Qwen3-8B: 60.7\% in 65\ms{} against 39.7\% in 90\ms); it scales to
+data), \dkv{} is 1.4 to 5.7 times faster than the OpenJev architecture and at least as accurate on six of the seven
+task--model pairs we could compare (Banking77 with Qwen3-8B: 63.0\% in 64\ms{} against 39.7\% in 90\ms); it scales to
 30{,}000 options where OpenJev stops at 255; with a catalogue trained in minutes it reaches 93.0\% on Banking77 in
 16\ms{} and 75.6\% on Typed Decisions without any LLM call, above CLM-8B with heads fine-tuned on the same tasks. The
 speed comes from organising the work around the KV cache: option lists stay resident in the cache across states, and
 the questions about one state share it through a prefix tree evaluated in one forward pass (a turn of 15 questions on
-a 27B hybrid model: from 11.1\,s to 1.6\,s with a long state). We report the weaknesses too: where it is less accurate,
+a 27B hybrid model: from 11.2\,s to 1.4\,s with a long state). We report the weaknesses too: where it is less accurate,
 how probabilities depend on batching in llama.cpp, and what we tried that did not work.
 \end{abstract}
 
@@ -65,8 +65,7 @@ summarises where it stands; the rest of the paper explains how it works and meas
 \textbf{Pros} & \textbf{Cons} \\
 \midrule
 Free (MIT), on GitHub, \texttt{pip install}, one call. &
-Less accurate than the OpenJev architecture on Typed Decisions with Qwen3-8B (56.7\% vs 59.3\%) and on WordNet-200
-with the 27B model (82.7\% vs 84.0\%). \\ \addlinespace[3pt]
+Less accurate than the OpenJev architecture on Typed Decisions with Qwen3-8B (56.7\% vs 59.3\%). \\ \addlinespace[3pt]
 1.4--5.7$\times$ faster than the OpenJev architecture; 15 questions about one state in one forward pass. &
 Without training, below CLM-8B fine-tuned on the task where a training set exists. \\ \addlinespace[3pt]
 Any GGUF model in llama.cpp, hybrid recurrent models included; any embedding model; three engines. &
@@ -77,7 +76,8 @@ No training needed; optional training in minutes with numpy, from human labels o
 llama.cpp probabilities depend slightly on how the prompt is split into batches. \\ \addlinespace[3pt]
 Trained, more accurate than fine-tuned CLM-8B on both tasks with training data, and not tied to one model. &
 On hybrid models parallelism is limited to eight sequences; \texttt{full=True} is slow there. \\ \addlinespace[3pt]
-Constrained answers (always an option), exclusion of refuted options, probabilities, cascade to the LLM. &
+Constrained answers (always an option), exclusion of refuted options, probabilities, cascade to the LLM,
+semantic cache for repetitive messages. &
 Measured on one GPU and one model family (Qwen). \\ \addlinespace[3pt]
 \bottomrule
 \end{tabular}
@@ -144,8 +144,9 @@ Piece & In the example & Changes \\
 \bottomrule
 \end{tabular}
 \end{center}
-In a real application almost all the text is fixed and only the state changes. With the options first, the prompt
-of the \texttt{Score} question is (exact text, inside the model's chat template):
+In a real application almost all the text is fixed and only the state changes, so \dkv{} puts everything fixed
+first. For a list asked its own question (one list, many states) the prompt of the \texttt{Score} question is (exact
+text, inside the model's chat template):
 \begin{center}
 \begin{minipage}{0.92\linewidth}\footnotesize
 \begin{verbatim}
@@ -156,17 +157,20 @@ the colon), and nothing else.                                    <- instructions
 0: calm
 1: annoyed
 2: furious                                                       <- options
-### State
-customer: This is the third time I write! My card was stolen ... <- state
 ### Question
 How upset is the customer? Answer with the level number.         <- question
+### State
+customer: This is the third time I write! My card was stolen ... <- state
 ### Level                                                        <- answer head
 \end{verbatim}
 \end{minipage}
 \end{center}
-The model's next token is the answer; the probabilities of the tokens \texttt{0}, \texttt{1}, \texttt{2} give the
-probability of every level. The question is fixed but comes after the state, so its keys and values depend on the
-state and are recomputed at every decision (a dozen tokens); everything before the state is reused.
+Everything above the state is one cached prefix; at every decision only the state and the answer head are computed.
+The model's next token is the answer, and the probabilities of the tokens \texttt{0}, \texttt{1}, \texttt{2} give the
+probability of every level. Putting the question before the state was never less accurate than putting it after
+(Section~\ref{sec:results}) and saves its tokens at every decision. When several questions share one list, as in
+the example's \texttt{Noul} questions, the list stays one cached prefix and each question goes after the state, so
+that the questions do not compete for the cache (Section~\ref{sec:tree}).
 
 \paragraph{Question types.} A decision is a state $s$ (any text or structured object) and a question $q$ with an option list $O_q$. A
 \texttt{Choice} picks one option; a \texttt{Score} picks one of $n$ levels described by criteria; a \texttt{Noul}
@@ -201,7 +205,8 @@ instead orders the prompt as [state] [instructions + options] [question + answer
 questions is evaluated once on a copy of the state; then every question---or, for an option block used once, the block
 and its question---is evaluated in its own sequence copied from its parent, all in one \texttt{llama\_decode}, keeping
 the logits of the last token of each sequence. On hybrid models the number of parallel sequences is bounded by the
-eight-sequence limit, so the questions run in groups. The order is chosen automatically: questions with a short option
+eight-sequence limit, so the questions run in groups, and the least recently used resident lists are freed when
+the tree needs the sequences. The order is chosen automatically: questions with a short option
 block (at most 2{,}000 characters, or shorter than the state) share the state when there are at least two of them;
 long lists stay options-first and resident across states.
 
@@ -303,7 +308,7 @@ With 300 queries one accuracy has a standard error of about 3 points; times vary
 
 \subsection{Comparison under equal conditions}
 Table~\ref{tab:comparison} compares the methods on Qwen3-8B. Without training, \dkv{} is ahead of the OpenJev
-architecture on Banking77, WordNet and the aim game, and behind it on Typed Decisions; it is 1.4--3.5 times faster.
+architecture on Banking77, WordNet and the aim game, and behind it on Typed Decisions; it is 1.4--3.7 times faster.
 CLM-8B as released is far behind on every task; with heads fine-tuned on the task it is ahead of untrained \dkv{} where
 a training set exists. With a trained catalogue \dkv{} is ahead of fine-tuned CLM-8B on both tasks with training data.
 
@@ -311,21 +316,21 @@ a training set exists. With a trained catalogue \dkv{} is ahead of fine-tuned CL
 \centering\small
 \caption{Accuracy $\cdot$ median time per decision on Qwen3-8B. Bold: the best accuracy and the lowest time of
 each column. ``--'': not applicable or not measured.}\label{tab:comparison}
-\begin{tabular}{lllll}
+\resizebox{\linewidth}{!}{\begin{tabular}{lllll}
 \toprule
 Method & Banking77 & WordNet-200 & Typed Decisions & Aim game (won) \\
 \midrule
-\dkv & 60.7\% $\cdot$ 65\ms & \textbf{70.7\%} $\cdot$ 38\ms & 56.7\% $\cdot$ \textbf{41\ms} & \textbf{95.0\%} $\cdot$ 159\ms \\
-\dkv, trained catalogue & \textbf{93.0\%} $\cdot$ \textbf{16\ms} & -- & \textbf{75.6\%} $\cdot$ 57\ms & -- \\
+\dkv & 63.0\% $\cdot$ 64\ms & \textbf{74.7\%} $\cdot$ 36\ms & 56.7\% $\cdot$ \textbf{41\ms} & \textbf{100\%} $\cdot$ 160\ms \\
+\dkv, trained catalogue & \textbf{93.0\%} $\cdot$ \textbf{15\ms} & -- & \textbf{75.6\%} $\cdot$ 57\ms & -- \\
 OpenJev architecture & 39.7\% $\cdot$ 90\ms & 63.3\% $\cdot$ 132\ms & 59.3\% $\cdot$ 67\ms & 25.0\% $\cdot$ 423\ms \\
 OpenJev library (Ollama) & 44.0\% $\cdot$ 117\ms & 22.7\% $\cdot$ 164\ms & 58.1\% $\cdot$ 62\ms & 25.0\% $\cdot$ 469\ms \\
 CLM-8B as released & 4.3\% $\cdot$ 35\ms & 12.7\% $\cdot$ \textbf{21\ms} & 36.8\% $\cdot$ 79\ms & 15.0\% $\cdot$ \textbf{124\ms} \\
 CLM-8B, heads fine-tuned & 84.3\% $\cdot$ 21\ms & 26.0\% $\cdot$ \textbf{21\ms} & 71.0\% $\cdot$ 79\ms & -- \\
-Embedding model alone & 65.7\% $\cdot$ \textbf{16\ms} & -- & -- & -- \\
-Embedding top-50, then LLM & 56.3\% $\cdot$ 127\ms & -- & -- & -- \\
+Embedding model alone & 65.7\% $\cdot$ 16\ms & -- & -- & -- \\
+Embedding top-50, then LLM & 58.3\% $\cdot$ 127\ms & -- & -- & -- \\
 Cross-encoder (30 messages) & 70.0\% $\cdot$ 1{,}589\ms & -- & -- & -- \\
 \bottomrule
-\end{tabular}
+\end{tabular}}
 \end{table}
 
 \begin{figure}[t]
@@ -335,9 +340,9 @@ Cross-encoder (30 messages) & 70.0\% $\cdot$ 1{,}589\ms & -- & -- & -- \\
 \end{figure}
 
 \paragraph{Hybrid 27B model.} On Qwen3.8-27B (Table~\ref{tab:hybrid}) the resident prefix is the only reuse
-available. \dkv{} is ahead of the OpenJev architecture on Banking77 and Typed Decisions, slightly behind on WordNet-200,
-and 1.6--5.7 times faster; on the aim game the OpenJev design did not finish in two hours because the whole grid is
-recomputed at every shot, while \dkv{} won every game at 340\ms{} per shot. CLM-8B cannot run here: its heads belong
+available. \dkv{} is ahead of the OpenJev architecture on Banking77, WordNet-200 and Typed Decisions, and 1.6--5.7
+times faster; on the aim game the OpenJev design did not finish in two hours because the whole grid is
+recomputed at every shot, while \dkv{} won every game at 339\ms{} per shot. CLM-8B cannot run here: its heads belong
 to Qwen3-8B.
 
 \begin{table}[t]
@@ -348,8 +353,8 @@ the best accuracy and the lowest time of each column.}\label{tab:hybrid}
 \toprule
 Method & Banking77 & WordNet-200 & Typed Decisions & Aim game (won) \\
 \midrule
-\dkv & \textbf{73.0\%} $\cdot$ \textbf{161\ms} & 82.7\% $\cdot$ \textbf{106\ms} & \textbf{70.4\%} $\cdot$ \textbf{193\ms} & \textbf{100\%} $\cdot$ \textbf{340\ms} \\
-OpenJev architecture & 45.7\% $\cdot$ 409\ms & \textbf{84.0\%} $\cdot$ 600\ms & 69.1\% $\cdot$ 307\ms & $>$2\,h, stopped \\
+\dkv & \textbf{72.0\%} $\cdot$ \textbf{163\ms} & \textbf{84.7\%} $\cdot$ \textbf{106\ms} & \textbf{70.4\%} $\cdot$ \textbf{193\ms} & \textbf{100\%} $\cdot$ \textbf{339\ms} \\
+OpenJev architecture & 45.7\% $\cdot$ 409\ms & 84.0\% $\cdot$ 600\ms & 69.1\% $\cdot$ 307\ms & $>$2\,h, stopped \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -367,22 +372,22 @@ grows, for every method.
 \toprule
 Options & \dkv & OpenJev arch. & CLM-8B & CLM-8B fine-tuned \\
 \midrule
-200 & 72.7\% $\cdot$ 40\ms & 63.3\% $\cdot$ 132\ms & 12.7\% $\cdot$ 21\ms & 26.0\% $\cdot$ 21\ms \\
-1{,}000 & 62.0\% $\cdot$ 41\ms & not supported & 4.7\% $\cdot$ 21\ms & 16.7\% $\cdot$ 21\ms \\
-3{,}000 & 57.3\% $\cdot$ 50\ms & not supported & 4.0\% $\cdot$ 21\ms & 10.7\% $\cdot$ 21\ms \\
-10{,}000 & 50.7\% $\cdot$ 81\ms & not supported & 3.3\% $\cdot$ 21\ms & 8.7\% $\cdot$ 21\ms \\
-30{,}000 & 46.0\% $\cdot$ 103\ms & not supported & -- & -- \\
+200 & 74.7\% $\cdot$ 37\ms & 63.3\% $\cdot$ 132\ms & 12.7\% $\cdot$ 21\ms & 26.0\% $\cdot$ 21\ms \\
+1{,}000 & 58.7\% $\cdot$ 39\ms & not supported & 4.7\% $\cdot$ 21\ms & 16.7\% $\cdot$ 21\ms \\
+3{,}000 & 60.7\% $\cdot$ 46\ms & not supported & 4.0\% $\cdot$ 21\ms & 10.7\% $\cdot$ 21\ms \\
+10{,}000 & 52.7\% $\cdot$ 81\ms & not supported & 3.3\% $\cdot$ 21\ms & 8.7\% $\cdot$ 21\ms \\
+30{,}000 & 48.0\% $\cdot$ 89\ms & not supported & -- & -- \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \subsection{Resident prefixes and the prefix tree}
-On 100 Banking77 messages a resident list costs 65\ms{} per decision on Qwen3-8B against 137\ms{} when the prompt is
-recomputed, and 161\ms{} against 475\ms{} on the 27B hybrid. Table~\ref{tab:order} shows the effect of the prompt order
+On 100 Banking77 messages a resident list costs 64\ms{} per decision on Qwen3-8B against 155\ms{} when the prompt is
+recomputed, and 157\ms{} against 538\ms{} on the 27B hybrid. Table~\ref{tab:order} shows the effect of the prompt order
 on Typed Decisions: answering the five questions of a case in one call with the state first is more accurate and
 faster than one question per call with the options first, on both models. Table~\ref{tab:turn} shows a turn of 15
 questions: the prefix tree makes the state-first order faster even with a very short state, and 7.7 times faster with
-a long state on Qwen3-8B (7.0 times on the 27B). Questions answered by option name are decoded token by token and stay
+a long state on Qwen3-8B (7.8 times on the 27B). Questions answered by option name are decoded token by token and stay
 outside the batch.
 
 \begin{table}[t]
@@ -392,7 +397,7 @@ outside the batch.
 \toprule
 & Qwen3-8B & Qwen3.8-27B \\
 \midrule
-Options first, one question per call & 51.1\% $\cdot$ 62\ms & 69.6\% $\cdot$ 249\ms \\
+Options first, one question per call & 51.0\% $\cdot$ 62\ms & 69.6\% $\cdot$ 249\ms \\
 State first, five questions per call (prefix tree) & 56.7\% $\cdot$ \textbf{41\ms} & \textbf{70.4\%} $\cdot$ \textbf{193\ms} \\
 OpenJev architecture & \textbf{59.3\%} $\cdot$ 67\ms & 69.1\% $\cdot$ 307\ms \\
 \bottomrule
@@ -406,17 +411,17 @@ OpenJev architecture & \textbf{59.3\%} $\cdot$ 67\ms & 69.1\% $\cdot$ 307\ms \\
 \toprule
 & Short state (99 chars) & Long state (3{,}177 chars) \\
 \midrule
-Qwen3-8B, options first & 330\ms & 2{,}537\ms \\
-Qwen3-8B, prefix tree & \textbf{171\ms} & \textbf{329\ms} \\
-Qwen3.8-27B, options first & 1{,}198\ms & 11{,}105\ms \\
-Qwen3.8-27B, prefix tree & \textbf{916\ms} & \textbf{1{,}591\ms} \\
+Qwen3-8B, options first & 337\ms & 2{,}615\ms \\
+Qwen3-8B, prefix tree & \textbf{174\ms} & \textbf{338\ms} \\
+Qwen3.8-27B, options first & 1{,}198\ms & 11{,}179\ms \\
+Qwen3.8-27B, prefix tree & \textbf{763\ms} & \textbf{1{,}440\ms} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \subsection{Trained catalogue}
-On Banking77 the trained catalogue alone rises from 65.7\% to 93.0\% at the cost of one embedding (94\,s of training
-on 10{,}003 examples, 18\,s of which optimisation). After training, sending its top-5 to the LLM \emph{lowers} the
+On Banking77 the trained catalogue alone rises from 65.7\% to 93.0\% at the cost of one embedding (92\,s of training
+on 10{,}003 examples, 17\,s of which optimisation). After training, sending its top-5 to the LLM \emph{lowers} the
 accuracy (61.0\%): the untrained LLM re-chooses among good candidates and is worse than the catalogue. On Typed
 Decisions (Table~\ref{tab:typed}) the catalogue trained on the official distributions reaches 75.6\% without any LLM
 call, the most accurate method we measured on this task. Trained on the LLM's own answers, with no human label, it
@@ -445,14 +450,63 @@ CLM-8B, heads fine-tuned & 6{,}000 human & 71.0\% $\cdot$ 79\ms \\
 \end{table}
 
 \paragraph{Fallback.} With a head trained on the examples of half of the Banking77 intents, intents without examples
-fall to 21.1\%. With the fallback they rise to 59.9\% (64\% of these decisions go to the LLM), while intents with
-examples go from 95.4\% to 86.3\%; over all 300 messages, 59.0\% becomes 73.3\% (untrained catalogue: 65.7\%).
+fall to 21.1\%. With the fallback they rise to 61.2\% (64\% of these decisions go to the LLM), while intents with
+examples go from 95.4\% to 85.0\%; over all 300 messages, 59.0\% becomes 73.3\% (untrained catalogue: 65.7\%).
 
 \paragraph{Cascade.} On Typed Decisions with the 27B model and a head trained on the 27B's own answers, a threshold
 of 0.5 gives 71.3\% in 251\ms{} against 70.2\% in 260\ms{} for the LLM alone; at 0.3, 68.9\% in 191\ms{} with
 half of the questions answered by the head alone. With a head trained on human labels, which is more accurate than the
 LLM, every question sent to the LLM lowers the accuracy: a cascade pays when the LLM is the better judge. (The 27B and
 the encoder do not fit together in 12\,GB, so the cascade was run in two phases with the same arithmetic.)
+
+\subsection{Question before the state}
+With the options first, the question can go before the state (one constant prefix: instructions, options, question)
+or after it. Each message was answered in both orders with the same model; Table~\ref{tab:qfirst} counts, for the
+paired McNemar test, the messages answered right in only one of the two. The question before the state is never less
+accurate, is significantly more accurate on CLINC150~\citep{clinc}, and saves about eleven tokens per decision, so it
+is the default when a list is asked its own question; all the results of Tables~\ref{tab:comparison}--\ref{tab:scale}
+with one question per list use it.
+
+\begin{table}[t]
+\centering\small
+\caption{Question after or before the state (Qwen3-8B, options first). Last columns: messages answered right only with
+the question after / only with it before, and the McNemar $p$-value.}\label{tab:qfirst}
+\begin{tabular}{lllcc}
+\toprule
+& After the state & Before the state & Only after / only before & $p$ \\
+\midrule
+Banking77 (3{,}080 messages) & 65.1\% $\cdot$ 66\ms & 65.5\% $\cdot$ \textbf{65\ms} & 72 / 85 & 0.34 \\
+CLINC150 (4{,}500 messages) & 80.0\% $\cdot$ 55\ms & \textbf{81.4\%} $\cdot$ \textbf{54\ms} & 107 / 170 & 0.0002 \\
+Typed Decisions (2{,}000) & 51.0\% $\cdot$ 66\ms & 51.1\% $\cdot$ \textbf{62\ms} & 133 / 136 & 0.90 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Semantic cache and the two modes}
+A semantic cache reuses the LLM's answer for a state whose embedding has a cosine of at least a threshold with a state
+already answered. Table~\ref{tab:semcache} runs it on streams of messages. On short natural-language messages
+(Banking77, CLINC150) a threshold of 0.95 keeps the LLM's accuracy with 37--47\% of the answers reused; on structured
+states (Typed Decisions) it loses accuracy even at 0.98, because states with almost the same text can need different
+answers. The catalogue trained on the LLM's answers is 4--9 times faster than the LLM on short messages, from 4.5
+points less accurate to slightly more. This gives two modes: for \emph{structured states}, the LLM with the prefix tree
+and no cache; for \emph{short natural-language messages}, a trained catalogue for speed, or the LLM with the cache
+(\texttt{cache=0.95}) to keep exactly its answers.
+
+\begin{table}[t]
+\centering\small
+\caption{Semantic cache on streams of messages (Qwen3-8B): accuracy $\cdot$ mean time per decision, with the share of
+answers reused. Last column: the catalogue trained on the LLM's answers (for Typed Decisions, the 8B-taught catalogue of
+Table~\ref{tab:typed}).}\label{tab:semcache}
+\resizebox{\linewidth}{!}{\begin{tabular}{llllll}
+\toprule
+& LLM alone & Cache 0.98 & Cache 0.95 & Cache 0.90 & Trained catalogue \\
+\midrule
+Banking77 (3{,}300) & 62.5\% $\cdot$ 67\ms & 62.7\% (10\%) & 62.5\% $\cdot$ 57\ms{} (37\%) & 62.6\% $\cdot$ 36\ms{} (69\%) & 58.0\% $\cdot$ 15\ms \\
+CLINC150 (4{,}500) & 79.8\% $\cdot$ 53\ms & 79.7\% (17\%) & 80.0\% $\cdot$ 34\ms{} (47\%) & 77.9\% $\cdot$ 20\ms{} (74\%) & 80.3\% $\cdot$ 6\ms \\
+Typed Decisions (8{,}000) & 57.9\% $\cdot$ 42\ms & 56.1\% (16\%) & 53.1\% $\cdot$ 21\ms{} (54\%) & 50.2\% $\cdot$ 9\ms{} (81\%) & 50.4\% $\cdot$ 57\ms \\
+\bottomrule
+\end{tabular}}
+\end{table}
 
 \subsection{Negative results}
 \begin{itemize}
@@ -501,21 +555,20 @@ or targets hybrid recurrent models. We found these works after our implementatio
 low-rank, identity-initialised correction follows LoRA~\citep{lora}.
 
 \section{Future work}
-Three directions follow from this work. \emph{Semantic caching}: when states are far more numerous than options,
-answers given to very similar states could be reused without any model call, as in semantic caches for LLM serving;
-the trained catalogue already generalises from the LLM's answers, and a direct comparison would show when a simple
-cache is enough. \emph{The question inside the constant block}: placing the question before the state would make
-instructions, options and question one constant prefix, at the price of asking the question before the model has read
-the state; its effect on accuracy has to be measured. \emph{Predict, then decide}: in our aim game the target does not
-move, so the state is the current grid. With moving targets (interception in robotics, pedestrians in driving,
-demand in logistics, load in energy networks) the decision should be taken on where the target \emph{will be}; a
-time-series forecaster could produce that predicted state for \dkv, and temporal patterns could also help to group
-similar states. Combining a forecaster and a decision model under a latency budget is a natural sequel.
+In our aim game the target does not move, so the state is the current grid and the options are fixed. With moving
+targets---interception in robotics, pedestrians in autonomous driving, demand in logistics, load in energy networks,
+leading shots in games---the decision should be taken on where the target \emph{will be}, not where it is. A natural
+sequel is to put a time-series forecaster in front of \dkv: the forecaster produces the predicted state, and the
+decision is taken on it with the same resident options and prefix tree; temporal patterns may also help to group
+similar states. Predict-then-act designs exist in robotics, where a small world model forecasts future visual tokens
+for a frozen vision-language-action model and enables catching moving objects~\citep{ahead}, and LLM agents are
+increasingly combined with time-series models~\citep{tsagents}; we are not aware of work that pairs a forecaster with
+typed, cache-resident LLM decisions under a latency budget.
 
 \section{Conclusion}
 \dkv{} is a free tool for a frequent task: fast, constrained, typed decisions with a local LLM. It is ready to use
-with any GGUF model, much faster than the OpenJev architecture and about as accurate (ahead on five of seven
-comparisons, behind on two), it scales to tens of thousands of options, it needs no training, and it can be trained
+with any GGUF model, much faster than the OpenJev architecture and at least as accurate in six of seven
+comparisons, it scales to tens of thousands of options, it needs no training, and it can be trained
 like CLM---from human labels or from the LLM itself---to answer in milliseconds without calling the LLM. Its weaknesses
 are stated above and in the repository. Treating typed decisions as a KV-cache problem---keep what is shared, compute
 what changes, branch where questions diverge---is the idea behind it. The library, the benchmarks and every result file

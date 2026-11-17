@@ -1,16 +1,16 @@
 {
   "banking77/flat": {
-    "acc": 0.6066666666666667,
-    "ms": 65.26415000007546,
+    "acc": 0.63,
+    "ms": 65.0953500153264,
     "queries": 300
   },
   "banking77/training": {
     "examples": 10003,
-    "total_s": 93.54764450000039,
+    "total_s": 92.2405979000032,
     "val_start": 0.712,
     "val_best": 0.924,
     "best_epoch": 19,
-    "train_s": 17.539213300000483,
+    "train_s": 17.00578200002201,
     "train_examples": 9003,
     "val_examples": 1000,
     "n_options": 77,
@@ -96,41 +96,41 @@
   },
   "banking77/catalogue-k1": {
     "acc": 0.6566666666666666,
-    "ms": 15.234800000143878,
+    "ms": 14.987699993071146,
     "queries": 300
   },
   "banking77/catalogue-k1-trained": {
     "acc": 0.93,
-    "ms": 15.569749999485794,
+    "ms": 15.138749993639067,
     "queries": 300
   },
   "banking77/catalogue-k5": {
-    "acc": 0.6166666666666667,
-    "ms": 83.65235000019311,
+    "acc": 0.6233333333333333,
+    "ms": 83.55604998359922,
     "queries": 300
   },
   "banking77/catalogue-k5-trained": {
     "acc": 0.61,
-    "ms": 83.92724999976053,
+    "ms": 83.87035000487231,
     "queries": 300
   },
   "banking77/catalogue-k50": {
-    "acc": 0.56,
-    "ms": 126.01360000007844,
+    "acc": 0.5833333333333334,
+    "ms": 133.00795000395738,
     "queries": 300
   },
   "banking77/catalogue-k50-trained": {
-    "acc": 0.5333333333333333,
-    "ms": 125.22164999973029,
+    "acc": 0.5533333333333333,
+    "ms": 130.6462499924237,
     "queries": 300
   },
   "banking77/half-training": {
     "examples": 5020,
-    "total_s": 44.73514419999992,
+    "total_s": 45.496795499988366,
     "val_start": 0.7151394422310757,
     "val_best": 0.9701195219123506,
     "best_epoch": 15,
-    "train_s": 9.687177100000554,
+    "train_s": 9.79917410001508,
     "train_examples": 4518,
     "val_examples": 502,
     "n_options": 77,
@@ -178,34 +178,34 @@
   },
   "banking77/half-seen": {
     "acc": 0.6601307189542484,
-    "ms": 15.375200000562472,
+    "ms": 16.020000010030344,
     "queries": 153
   },
   "banking77/half-seen-trained": {
-    "acc": 0.8627450980392157,
-    "ms": 15.83790000040608,
+    "acc": 0.8496732026143791,
+    "ms": 16.259700001683086,
     "queries": 153,
     "fallback_rate": 0.1503267973856209
   },
   "banking77/half-unseen": {
     "acc": 0.6530612244897959,
-    "ms": 15.172900000834488,
+    "ms": 16.100300010293722,
     "queries": 147
   },
   "banking77/half-unseen-trained": {
-    "acc": 0.5986394557823129,
-    "ms": 82.69470000050205,
+    "acc": 0.6122448979591837,
+    "ms": 84.12680000765249,
     "queries": 147,
     "fallback_rate": 0.6394557823129252
   },
   "banking77/half-seen-trained-nofallback": {
     "acc": 0.954248366013072,
-    "ms": 15.400999998746556,
+    "ms": 16.23559999279678,
     "queries": 153
   },
   "banking77/half-unseen-trained-nofallback": {
     "acc": 0.2108843537414966,
-    "ms": 15.108400000826805,
+    "ms": 15.643499995348975,
     "queries": 147
   }
 }

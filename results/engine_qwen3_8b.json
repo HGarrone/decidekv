@@ -4,17 +4,17 @@
     "tail_removal": true
   },
   "qwen3_8b/banking77/resident": {
-    "acc": 0.63,
-    "ms": 64.72275000123773,
+    "acc": 0.69,
+    "ms": 63.62860000808723,
     "queries": 100
   },
   "qwen3_8b/banking77/recompute": {
-    "acc": 0.66,
-    "ms": 136.64615000016056,
+    "acc": 0.69,
+    "ms": 154.85560000524856,
     "queries": 100
   },
   "qwen3_8b/turn15": {
-    "ms": 170.5550000187941,
+    "ms": 174.0132000122685,
     "questions": 15,
     "computed_tokens": 576,
     "reused_tokens": 1547,
@@ -26,17 +26,17 @@
     "tail_removal": false
   },
   "ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/banking77/resident": {
-    "acc": 0.76,
-    "ms": 160.58234999945853,
+    "acc": 0.73,
+    "ms": 157.00185000605416,
     "queries": 100
   },
   "ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/banking77/recompute": {
-    "acc": 0.76,
-    "ms": 475.21775000495836,
+    "acc": 0.73,
+    "ms": 537.512400012929,
     "queries": 100
   },
   "ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/turn15": {
-    "ms": 915.5985999968834,
+    "ms": 763.0371999985073,
     "questions": 15,
     "computed_tokens": 596,
     "reused_tokens": 1602,
@@ -44,7 +44,7 @@
     "order": "auto"
   },
   "qwen3_8b/turn15/short/options": {
-    "ms": 329.6268999984022,
+    "ms": 337.2545000165701,
     "questions": 15,
     "computed_tokens": 835,
     "reused_tokens": 1018,
@@ -52,7 +52,7 @@
     "order": "options"
   },
   "qwen3_8b/turn15/short/auto": {
-    "ms": 170.5550000187941,
+    "ms": 174.0132000122685,
     "questions": 15,
     "computed_tokens": 576,
     "reused_tokens": 1547,
@@ -60,7 +60,7 @@
     "order": "auto"
   },
   "qwen3_8b/turn15/long/options": {
-    "ms": 2537.3549000069033,
+    "ms": 2615.042399993399,
     "questions": 15,
     "computed_tokens": 13465,
     "reused_tokens": 1018,
@@ -68,7 +68,7 @@
     "order": "options"
   },
   "qwen3_8b/turn15/long/auto": {
-    "ms": 329.17459998861887,
+    "ms": 338.0357999994885,
     "questions": 15,
     "computed_tokens": 1418,
     "reused_tokens": 13335,
@@ -76,7 +76,7 @@
     "order": "auto"
   },
   "ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/turn15/short/options": {
-    "ms": 1198.1457999791019,
+    "ms": 1197.766600002069,
     "questions": 15,
     "computed_tokens": 880,
     "reused_tokens": 1033,
@@ -84,7 +84,7 @@
     "order": "options"
   },
   "ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/turn15/short/auto": {
-    "ms": 915.5985999968834,
+    "ms": 763.0371999985073,
     "questions": 15,
     "computed_tokens": 596,
     "reused_tokens": 1602,
@@ -92,7 +92,7 @@
     "order": "auto"
   },
   "ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/turn15/long/options": {
-    "ms": 11104.983400000492,
+    "ms": 11178.708999999799,
     "questions": 15,
     "computed_tokens": 14080,
     "reused_tokens": 1033,
@@ -100,7 +100,7 @@
     "order": "options"
   },
   "ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/turn15/long/auto": {
-    "ms": 1591.473499982385,
+    "ms": 1440.2613999845926,
     "questions": 15,
     "computed_tokens": 1476,
     "reused_tokens": 13922,
@@ -113,12 +113,12 @@
     "n_ctx": 32768
   },
   "qwen3_8b/llamaserver/banking77/resident": {
-    "acc": 0.63,
-    "ms": 75.41295000009995,
+    "acc": 0.68,
+    "ms": 74.15560001390986,
     "queries": 100
   },
   "qwen3_8b/llamaserver/turn15/short/options": {
-    "ms": 430.0419999999576,
+    "ms": 465.9388999862131,
     "questions": 15,
     "computed_tokens": 354,
     "reused_tokens": 1499,
@@ -126,7 +126,7 @@
     "order": "options"
   },
   "qwen3_8b/llamaserver/turn15/short/auto": {
-    "ms": 466.36100000068836,
+    "ms": 388.7737999903038,
     "questions": 15,
     "computed_tokens": 441,
     "reused_tokens": 1682,
@@ -134,7 +134,7 @@
     "order": "auto"
   },
   "qwen3_8b/llamaserver/turn15/long/options": {
-    "ms": 904.2869999993854,
+    "ms": 752.6672999956645,
     "questions": 15,
     "computed_tokens": 2034,
     "reused_tokens": 12449,
@@ -142,7 +142,7 @@
     "order": "options"
   },
   "qwen3_8b/llamaserver/turn15/long/auto": {
-    "ms": 614.8928999991767,
+    "ms": 584.4958999950904,
     "questions": 15,
     "computed_tokens": 1283,
     "reused_tokens": 13470,
@@ -150,7 +150,7 @@
     "order": "auto"
   },
   "qwen3_8b/llamaserver/turn15": {
-    "ms": 466.36100000068836,
+    "ms": 388.7737999903038,
     "questions": 15,
     "computed_tokens": 441,
     "reused_tokens": 1682,

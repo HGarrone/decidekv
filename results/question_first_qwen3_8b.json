@@ -1,0 +1,49 @@
+{
+  "banking77/today": {
+    "acc": 0.6506493506493507,
+    "ms": 65.79150001925882,
+    "n": 3080,
+    "computed_tokens": 38.0
+  },
+  "banking77/question-in-prefix": {
+    "acc": 0.6548701298701298,
+    "ms": 64.83265000861138,
+    "n": 3080,
+    "computed_tokens": 27.0
+  },
+  "clinc/today": {
+    "acc": 0.8002222222222222,
+    "ms": 54.527550004422665,
+    "n": 4500
+  },
+  "clinc/question-in-prefix": {
+    "acc": 0.8142222222222222,
+    "ms": 53.72845000238158,
+    "n": 4500
+  },
+  "typed/today": {
+    "acc": 0.5095,
+    "ms": 66.00079998315778,
+    "n": 2000
+  },
+  "typed/question-in-prefix": {
+    "acc": 0.511,
+    "ms": 62.41349999618251,
+    "n": 2000
+  },
+  "banking77/mcnemar": {
+    "only_today": 72,
+    "only_question_in_prefix": 85,
+    "p": 0.3382353307950119
+  },
+  "clinc/mcnemar": {
+    "only_today": 107,
+    "only_question_in_prefix": 170,
+    "p": 0.00018408054667157743
+  },
+  "typed/mcnemar": {
+    "only_today": 133,
+    "only_question_in_prefix": 136,
+    "p": 0.9029744638059501
+  }
+}

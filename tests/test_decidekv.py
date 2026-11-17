@@ -34,7 +34,7 @@ class FakeClient:
             prefix, state_seg = first, second
         state = state_seg.split("\n", 1)[1].lower()                  # "### <state label>\n<state>"
         body = prefix.split("\n\n### ", 1)[1]                         # "<Nouns>\n<option lines>"
-        opts = body.split("\n", 1)[1].strip().splitlines()
+        opts = body.split("\n", 1)[1].split("\n\n", 1)[0].strip().splitlines()
         return state, opts
 
     def prefill(self, segments, num_ctx=None):
@@ -118,7 +118,7 @@ def test_prefix_is_identical_across_states():
     idx.choose("a completely different state")
     p1, p2 = kv.client.prompts[-2], kv.client.prompts[-1]
     cut = p1.index("### State")
-    assert p1[:cut] == p2[:cut] == idx.prefix
+    assert p1[:cut] == p2[:cut] == idx.prefix + idx.question_block(None)
 
 
 def test_index_is_reused():
@@ -160,7 +160,11 @@ def test_domain_prompt_is_cached_with_names():
     idx = kv.index(["card arrival", "lost card"], noun="intent", state_label="Customer message", question=q)
     seg = idx.segments("my card is lost", q)
     assert "### Intents" in idx.prefix and "intent" in idx.prefix
-    assert seg[1].startswith("### Customer message") and seg[2] == f"### Question\n{q}\n\n### Intent\n"
+    assert seg[0] == idx.prefix + f"### Question\n{q}\n\n"
+    assert seg[1].startswith("### Customer message") and seg[2] == "### Intent\n"
+    old = kv.index(["card arrival", "lost card"], noun="intent", state_label="Customer message", question=q,
+                   question_first=False).segments("my card is lost", q)
+    assert old[0] == idx.prefix and old[2] == f"### Question\n{q}\n\n### Intent\n"
     sf = idx.segments("my card is lost", q, order="state-first")      # same blocks, other order
     assert sorted("".join(sf)) == sorted("".join(seg)) and "".join(sf) != "".join(seg)
     assert idx.choose("my lost card").choice == "lost card"
@@ -391,20 +395,25 @@ def test_answer_targets():
         answer_target(score, ["0", "1", "2"], {"7": 1.0})
 
 
+def shared_calls(kv):
+    """hold/release calls of a state shared by several questions (options-first prefixes are held too)."""
+    return [c for c in kv.client.calls if c[1].startswith("You are a decision engine. Questions about")]
+
+
 def test_decide_state_order_shares_the_state():
     kv = make_kv()
     qs = {"n1": Noul(instructions="Is the light red?"), "n2": Noul(instructions="Is it raining?"),
           "s": Score(instructions="How loud is it?", criteria=["quiet", "loud"])}
     state = "A long street at night. " * 20
     r_opt = kv.decide(state, qs, order="options")
-    assert kv.client.calls == []
+    assert shared_calls(kv) == []
     n = len(kv.client.firsts)
     r_st = kv.decide(state, qs, order="state")
     firsts = kv.client.firsts[n:]
     assert len(firsts) == 3
     assert len(set(firsts)) == 1
     assert firsts[0].startswith("You are a decision engine. Questions about")
-    assert kv.client.calls == [("hold", firsts[0]), ("release", firsts[0])]
+    assert shared_calls(kv) == [("hold", firsts[0]), ("release", firsts[0])]
     for qid in qs:
         assert r_opt.answers[qid] == r_st.answers[qid]
 
@@ -413,18 +422,18 @@ def test_decide_auto_order():
     kv = make_kv()
     two = {"a": Noul(instructions="Is the light red?"), "b": Noul(instructions="Is it raining?")}
     kv.decide("A long street at night. " * 20, two)
-    assert [c[0] for c in kv.client.calls] == ["hold", "release"]
+    assert [c[0] for c in shared_calls(kv)] == ["hold", "release"]
     kv.client.calls.clear()
     kv.decide("A long street at night. " * 20, {"a": two["a"]})
-    assert kv.client.calls == []
+    assert shared_calls(kv) == []
     kv.decide("Night.", two)
-    assert [c[0] for c in kv.client.calls] == ["hold", "release"]
+    assert [c[0] for c in shared_calls(kv)] == ["hold", "release"]
     kv.client.calls.clear()
     words = [f"word{i:04d}" for i in range(400)]
     big = {"a": Choice(instructions="Which word?", options=words), "b": Choice(instructions="Which other word?",
                                                                                options=words)}
     kv.decide("Night.", big)
-    assert kv.client.calls == []
+    assert shared_calls(kv) == []
 
 
 def test_decide_unknown_order():
@@ -631,3 +640,28 @@ def test_train_questions_per_question_layout():
     assert r.answers["c"].choice == "cccc"
     with pytest.raises(ValueError):
         kv.train_questions(examples, layout="sideways")
+
+
+def test_semantic_cache_in_choose():
+    kv = make_kv(embed=FakeEncoder())
+    idx = kv.index(WORDS)
+    first = idx.choose("zebra zebra", cache=0.99)
+    n = len(kv.client.prompts)
+    again = idx.choose("zebra zebra", cache=0.99)
+    assert again == first
+    assert len(kv.client.prompts) == n
+    assert idx.semantic.hits == 1
+    idx.choose("piano piano", cache=0.99)
+    assert len(kv.client.prompts) > n
+
+
+def test_semantic_cache_in_decide():
+    kv = make_kv(embed=FakeEncoder())
+    qs = {"a": Noul(instructions="Is the light red?"), "b": Noul(instructions="Is it raining?")}
+    r1 = kv.decide("A long street at night. " * 20, qs, cache=0.99)
+    assert r1.cached == []
+    n = len(kv.client.prompts)
+    r2 = kv.decide("A long street at night. " * 20, qs, cache=0.99)
+    assert sorted(r2.cached) == ["a", "b"]
+    assert len(kv.client.prompts) == n
+    assert r2.answers == r1.answers

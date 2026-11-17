@@ -77,6 +77,37 @@ class Catalog:
         return v
 
 
+class SemanticCache:
+    """Answers already given by the LLM, looked up by the embedding of the state (cosine >= threshold)."""
+
+    def __init__(self, threshold: float):
+        self.threshold = float(threshold)
+        self.vectors = []        # list of 1-D numpy arrays (L2-normalised embeddings)
+        self.answers = []
+        self.hits = 0
+        self.misses = 0
+
+    def lookup(self, v):
+        """The stored answer of the most similar state when its cosine with `v` is >= threshold, else None.
+        Counts hits and misses."""
+        if not self.vectors:
+            self.misses += 1
+            return None
+        sims = np.stack(self.vectors) @ v
+        j = int(np.argmax(sims))
+        if sims[j] >= self.threshold:
+            self.hits += 1
+            return self.answers[j]
+        else:
+            self.misses += 1
+            return None
+
+    def add(self, v, answer):
+        """Store the answer given for the state with embedding `v`."""
+        self.vectors.append(np.asarray(v, dtype=np.float32))
+        self.answers.append(answer)
+
+
 class TopKIndex:
     """Index for large option sets: the catalogue selects the `k` options closest to the state and the
     LLM chooses among them. `last_candidates` holds the options shown to the LLM in the last decision."""

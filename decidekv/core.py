@@ -82,12 +82,17 @@ class Index:
     "Definition"…) and `question` become part of the cached prompt. A domain-specific prompt measured up
     to +16 points over a generic one.
     `wording` overrides the fixed words of the prompt (keys of `WORDING`): for prompts in another language.
+    `question_first` (default: the KV's setting, True) puts the question before the state in the options-first
+    prompt, so that instructions, options and question are one cached prefix; False puts it after the state.
     """
 
     def __init__(self, kv: "KV", options: Any, labels: Any = False, task: str | None = None,
                  question: str | None = None, noun: str = "option", state_label: str = "State",
-                 enum_max: int = 500, warm: bool = True, wording: dict | None = None):
+                 enum_max: int = 500, warm: bool = True, wording: dict | None = None,
+                 question_first: bool | None = None):
         self.kv = kv
+        # options-first prompts put the question before the state (default) or after it (question_first=False)
+        self.question_first = getattr(kv, "question_first", True) if question_first is None else question_first
         self.keys, self.descs, self.texts = parse_options(options)
         self.n = len(self.keys)
         self.task, self.question, self.noun, self.state_label = task, question, noun, state_label
@@ -146,11 +151,14 @@ class Index:
         return self._intro + self._options
 
     def segments(self, state: Any, instructions: str | None, order: str = "options-first") -> tuple[str, str, str]:
-        """options-first: [intro + options] [state] [question + head]; the first segment is shared by every
-        call, so the backend keeps it in the KV cache. state-first: [intro + state] [question] [options + head].
+        """options-first: [intro + options + question] [state] [head] (or [intro + options] [state] [question +
+        head] with question_first=False); the first segment is the same for every state, so the backend keeps it
+        in the KV cache. state-first: [intro + state] [question] [options + head].
         shared-state: [shared intro + state] [intro + options] [question + head]; the same first segment for
         every question about one state."""
         if order == "options-first":
+            if self._question_in_prefix(instructions):
+                return (self.prefix + self.question_block(instructions), self.state_block(state), self.answer_head())
             return (self.prefix, self.state_block(state), self.question_block(instructions) + self.answer_head())
         if order == "shared-state":
             head = self.wording["shared_intro"].format(state=self.state_label.lower())
@@ -158,17 +166,24 @@ class Index:
         return (self._intro + self.state_block(state), self.question_block(instructions),
                 self._options + self.answer_head())
 
+    def _question_in_prefix(self, instructions: str | None) -> bool:
+        """The question goes into the cached prefix only when the list is used with its own question (one list,
+        many states). When several questions share one list (as in `decide`), the list stays one shared prefix and
+        the question goes after the state: a prefix per question would compete for the resident slots."""
+        return self.question_first and (instructions is None or instructions == self.question)
+
     def prompt(self, state: Any, instructions: str | None) -> str:
         return "".join(self.segments(state, instructions))
 
-    def warm(self) -> "Index":
-        """Fill the KV cache with the options block (the offline 'indexing' step)."""
+    def warm(self, instructions: str | None = None) -> "Index":
+        """Fill the KV cache with the options block (the offline 'indexing' step); `instructions` is the question
+        the index will be asked, so that exactly the prefix used later is prepared."""
         self.kv._check_arch()
-        st = self.kv.client.prefill(self.segments("(empty)", None), self.num_ctx)
+        st = self.kv.client.prefill(self.segments("(empty)", instructions), self.num_ctx)
         self.prompt_tokens = st["input_tokens"] + st["cached_tokens"]
         if self.prompt_tokens + 256 > self.num_ctx:
             self.kv.require_ctx(1 << math.ceil(math.log2(self.prompt_tokens + 1024)))
-            self.warm()
+            self.warm(instructions)
         return self
 
     @property
@@ -176,8 +191,16 @@ class Index:
         return self.kv.num_ctx
 
     # ------------------------------------------------------------ answering
+    def _state_vector(self, state, instructions):
+        """Embedding of the state for the semantic cache (same query format as the catalogue)."""
+        from .catalog import QUERY_TEMPLATE
+        template = self.kv.query_template or QUERY_TEMPLATE
+        q = instructions or self.question or ""
+        return self.kv.encoder([template.format(question=q, state=render_state(state))])[0]
+
     def choose(self, state: Any, instructions: str | None = None, usage: Usage | None = None,
-               exclude: Iterable[str] = (), full: bool = False, order: str = "options-first") -> ChoiceAnswer:
+               exclude: Iterable[str] = (), full: bool = False, order: str = "options-first",
+               cache: float | None = None) -> ChoiceAnswer:
         """Pick the best option for `state` (one call to the LLM).
 
         `exclude` removes options from the choice (e.g. attempts already refuted by the environment in a
@@ -187,9 +210,27 @@ class Index:
         distinct token prefix of the options, so use it with a few dozen options or when the distribution matters.
 
         `order` is the order of the prompt blocks (see `segments`); `KV.decide` uses "shared-state" for many
-        questions about one state."""
+        questions about one state.
+
+        `cache` (a cosine threshold such as 0.95) reuses the answer given to a very similar state, without calling
+        the LLM; it needs an embedding model (`KV(..., embed=...)`). Use it for short natural-language messages, not
+        for structured states. `self.semantic` holds the cache (hits, misses)."""
+        if cache is not None and not exclude and not full:
+            if getattr(self, "semantic", None) is None or self.semantic.threshold != cache:
+                from .catalog import SemanticCache
+                self.semantic = SemanticCache(cache)
+            v = self._state_vector(state, instructions)
+            hit = self.semantic.lookup(v)
+            if hit is not None:
+                return hit
+            answer = self.choose(state, instructions, usage, exclude, full, order)
+            self.semantic.add(v, answer)
+            return answer
         excluded = set(exclude)
         allowed = [k_ for k_ in self.keys if k_ not in excluded] if excluded else self.keys
+        if order == "options-first" and self.prompt_tokens is not None:
+            # keep resident exactly the prefix this call uses (with or without the question, see segments)
+            self.kv.client.hold(self.segments("", instructions, order)[0])
         if not allowed:
             raise ValueError("every option is excluded")
         usage = usage if usage is not None else Usage()
@@ -289,7 +330,8 @@ class KV:
     """
 
     def __init__(self, model: str, backend: str = "llamacpp", host: str | None = None, keep_alive: str = "30m",
-                 embed: Any = None, flat_max: int = 3000, query_template: str | None = None, **backend_kw):
+                 embed: Any = None, flat_max: int = 3000, query_template: str | None = None,
+                 question_first: bool = True, **backend_kw):
         """backend="llamacpp" (default: in-process llama.cpp; loads the GGUF that Ollama already downloaded, or a
         .gguf path; extra keyword arguments such as n_ctx and kv_type go to the backend) or "llamaserver" (a
         llama.cpp `llama-server`: with `host` the URL of a running server, without it decidekv starts one on the
@@ -314,6 +356,7 @@ class KV:
         self.backend = backend
         self.embed = embed
         self.flat_max = flat_max
+        self.question_first = question_first
         self.query_template = query_template
         # one context size for the whole session: Ollama reloads the model whenever num_ctx changes
         self.num_ctx = 4096
@@ -436,7 +479,7 @@ class KV:
 
     def decide(self, state: Any, questions: dict[str, Any] | Any = None, temperature: float = 1.0,
                labels: bool = False, full: bool = False, head: Any = None, order: str = "auto",
-               threshold: float | None = None) -> Response:
+               threshold: float | None = None, cache: float | None = None) -> Response:
         """OpenJev / Jev-style: several typed questions about one state.
 
         `questions` maps ids to `Choice`, `Score` or `Noul` (these classes, OpenJev's, or plain dicts with a
@@ -448,6 +491,9 @@ class KV:
         `threshold` with a head makes a cascade: the catalogue answers every question, and the questions whose
         answer has a confidence below `threshold` (1 - normalised entropy, as in OpenJev) are asked to the LLM in
         one call; `Response.escalated` lists them.
+        `cache` (a cosine threshold such as 0.95) reuses, question by question, the answer given to a very
+        similar state; `Response.cached` lists them. For short natural-language messages, not for structured
+        states; it needs an embedding model.
         `order`: "options" keeps every option list first in the prompt (cached across states); "state" puts the
         state first, shared by all the questions of the call; "auto" (default) puts the state first for the
         questions with a short option list (at most 2,000 characters, or shorter than the state), when there
@@ -469,6 +515,30 @@ class KV:
             answers = {qid: llm.answers.get(qid, a) for qid, a in cat.answers.items()}
             return Response(model=f"decidekv/{self.model}/cascade", answers=answers, usage=llm.usage,
                             latency_ms=round(cat.latency_ms + llm.latency_ms, 2), escalated=low)
+        if cache is not None:
+            t_start = time.perf_counter()
+            from .catalog import QUERY_TEMPLATE, SemanticCache
+            template = self.query_template or QUERY_TEMPLATE
+            v = self.encoder([template.format(question=STATE_INSTRUCTION, state=render_state(state))])[0]
+            caches = self.__dict__.setdefault("_semantic", {})
+            reused, rest = {}, {}
+            for qid, q in questions.items():
+                key = (repr(_coerce(q)), cache)
+                if key not in caches:
+                    caches[key] = SemanticCache(cache)
+                hit = caches[key].lookup(v)
+                if hit is not None:
+                    reused[qid] = hit
+                else:
+                    rest[qid] = q
+            r = self.decide(state, rest, temperature=temperature, labels=labels, full=full, order=order) if rest \
+                else Response(model=f"decidekv/{self.model}", answers={}, usage=Usage(), latency_ms=0.0)
+            for qid, q in rest.items():
+                caches[(repr(_coerce(q)), cache)].add(v, r.answers[qid])
+            answers = {qid: reused.get(qid, r.answers.get(qid)) for qid in questions}
+            return Response(model=f"decidekv/{self.model}", answers=answers, usage=r.usage,
+                            latency_ms=round((time.perf_counter() - t_start) * 1000, 2),
+                            cached=list(reused))
         t0 = time.perf_counter()
         usage, answers = Usage(), {}
         items = [(qid,) + tuple(self.question_index(q, labels=labels, warm=False)) for qid, q in questions.items()]
@@ -491,7 +561,7 @@ class KV:
         try:
             for qid, q, idx, instructions in items:
                 if qid not in shared and getattr(idx, "prompt_tokens", 0) is None:
-                    idx.warm()
+                    idx.warm(instructions)
             batch = [(qid, idx, ins) for qid, q, idx, ins in items
                      if qid in shared and idx.labels and not (full and q.type == "choice")]
             if len(batch) >= 2 and hasattr(self.client, "label_logprobs_tree"):

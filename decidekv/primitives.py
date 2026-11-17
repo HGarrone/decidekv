@@ -72,6 +72,8 @@ class Response:
     latency_ms: float
     # questions the trained catalogue passed to the LLM (cascade)
     escalated: list[str] = field(default_factory=list)
+    # questions answered from the semantic cache (no LLM call)
+    cached: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)

@@ -57,6 +57,15 @@ Run the offline tests with `pip install pytest` and `pytest`.
 
 ## Usage
 
+### Which mode for which kind of state
+
+Measured on three datasets (see the results): the right shortcut depends on what the states look like.
+
+| Kind of state | Recommended | Why |
+|---|---|---|
+| **Structured** (records, game states, agent traces, forms) | `kv.decide(...)`: the LLM with the prefix tree, **no cache** | similar-looking structured states often need different answers: the semantic cache and the catalogue lose accuracy, and the prefix tree already gives the speed |
+| **Short natural-language messages** (requests, e-mails, chat) | a **trained catalogue** (`kv.train` / `kv.teach`) for speed; or the LLM with `cache=0.95` to keep exactly its answers | many messages look alike: the catalogue answers in the time of one embedding, the cache reuses the LLM's answers for near-duplicates |
+
 ### One list of options, many states
 
 ```python
@@ -105,6 +114,19 @@ r.answers["intent"].choice, r.answers["mood"].score, r.answers["escalate"].noul
 When several questions with short option lists are asked about a long state, `decide` puts the state first in the
 prompt and keeps it in the cache for all of them, so the state is computed once per turn instead of once per
 question (`order="auto"`, the default; `order="options"` or `"state"` force one order).
+
+### Semantic cache (short natural-language messages)
+
+`cache=0.95` reuses the LLM's answer for a state whose embedding has a cosine of at least 0.95 with a state already
+answered; it needs an embedding model. It works per index (`choose`) and per question (`decide`):
+
+```python
+kv = KV("qwen3:8b", embed="qwen3-embedding:4b")
+intents.choose(message, cache=0.95)              # intents.semantic.hits / .misses
+r = kv.decide(state, questions, cache=0.95)      # r.cached lists the questions answered from the cache
+```
+
+Keep it for repetitive natural-language messages: on structured states it lowers accuracy even at 0.98.
 
 ### Trial and error
 
@@ -209,6 +231,11 @@ including models with recurrent layers (Qwen3.5/3.8, Mamba, Jamba…), and up to
 `resident` at 7 or less on models with recurrent layers: with more sequences llama.cpp decodes them up to ten times
 slower.
 
+When a list is used with its own question (one list, many states), the question goes before the state, so
+instructions, options and question are one cached prefix (`question_first=True`, the default;
+`KV(..., question_first=False)` puts it after the state). When several questions share one list, as in `decide`, the
+list stays one cached prefix and the question goes after the state, so that the questions do not compete for the
+resident slots.
 `n_ctx` (16,384 tokens by default) must hold the option lists; `kv_type="q8_0"` halves the memory of the cache;
 `kv_on_gpu=False` keeps the cache in system memory when the weights fill the GPU. `KV(model, backend="ollama")`
 talks to the Ollama server instead: it gives the same kind of answers, but the confidence of a choice is not available
@@ -282,8 +309,8 @@ flowchart LR
     class k1,k2,k3,k4 kv
 ```
 
-**Why it matters.** The same model, prompt blocks and machine give, per decision: Banking77 60.7% in 65 ms for
-DecideKV against 39.7% in 90 ms for the OpenJev architecture (Qwen3-8B), 73.0% in 161 ms against 45.7% in 409 ms on
+**Why it matters.** The same model, prompt blocks and machine give, per decision: Banking77 63.0% in 64 ms for
+DecideKV against 39.7% in 90 ms for the OpenJev architecture (Qwen3-8B), 72.0% in 163 ms against 45.7% in 409 ms on
 a hybrid 27B; DecideKV keeps working at 30,000 options where OpenJev stops at 255; with the catalogue trained on the
 task it reaches 93.0% in 15 ms on Banking77 and 75.6% with no LLM call on Typed Decisions, above CLM-8B with heads
 fine-tuned on the same tasks (84.3% and 71.0%), on any model instead of one. The tables below have every number.
@@ -306,14 +333,14 @@ generated from the files in `results/` by `python benchmarks/report.py`.
 <!-- table:comparison -->
 | Method | Training | Banking77 (77 intents) | WordNet (200 words) | Typed Decisions | Aim game (games won, time per shot) |
 |---|---|---|---|---|---|
-| **DecideKV** | none | 60.7% · 65 ms | 70.7% · 38 ms | 56.7% · 41 ms | 95.0% · 159 ms |
-| **DecideKV, trained catalogue** | on the task | 93.0% · 16 ms | – | 75.6% · 57 ms | – |
+| **DecideKV** | none | 63.0% · 64 ms | 74.7% · 36 ms | 56.7% · 41 ms | 100.0% · 160 ms |
+| **DecideKV, trained catalogue** | on the task | 93.0% · 15 ms | – | 75.6% · 57 ms | – |
 | OpenJev architecture, shared prompt | none | 39.7% · 90 ms | 63.3% · 132 ms | 59.3% · 67 ms | 25.0% · 423 ms |
 | OpenJev library, own prompt, Ollama | none | 44.0% · 117 ms | 22.7% · 164 ms | 58.1% · 62 ms | 25.0% · 469 ms |
 | CLM-8B as released | none | 4.3% · 35 ms | 12.7% · 21 ms | 36.8% · 79 ms | 15.0% · 124 ms |
 | CLM-8B, heads fine-tuned | on the task | 84.3% · 21 ms | 26.0% · 21 ms | 71.0% · 79 ms | – |
 | Embedding model alone | none | 65.7% · 16 ms | – | – | – |
-| Embedding top-50, then LLM | none | 56.3% · 127 ms | – | – | – |
+| Embedding top-50, then LLM | none | 58.3% · 127 ms | – | – | – |
 | State-first prompt, constrained decoding | none | 61.0% · 138 ms | – | – | – |
 | Cross-encoder, one LLM call per option (30 messages) | none | 70.0% · 1,589 ms | – | – | – |
 <!-- /table:comparison -->
@@ -337,7 +364,7 @@ aim game, so that the 9.3 GB of weights and the cache fit in 12 GB:
 <!-- table:hybrid27b -->
 | Method | Banking77 (77 intents) | WordNet (200 words) | Typed Decisions | Aim game (games won, time per shot) |
 |---|---|---|---|---|
-| **DecideKV** | 73.0% · 161 ms | 82.7% · 106 ms | 70.4% · 193 ms | 100.0% · 340 ms |
+| **DecideKV** | 72.0% · 163 ms | 84.7% · 106 ms | 70.4% · 193 ms | 100.0% · 339 ms |
 | OpenJev architecture, shared prompt | 45.7% · 409 ms | 84.0% · 600 ms | 69.1% · 307 ms | not measured: over two hours (the whole grid is recomputed at every shot) |
 <!-- /table:hybrid27b -->
 
@@ -351,10 +378,10 @@ WordNet reverse dictionary (definition → word), 600 definitions:
 <!-- table:scale -->
 | Options | Index chosen by `KV.index` | Accuracy | Time per decision | Index build | Right answer among the 50 candidates |
 |---|---|---|---|---|---|
-| 1,000 | Index | 66.7% | 43 ms | 1 s | – |
-| 3,000 | Index | 56.3% | 51 ms | 2 s | – |
-| 10,000 | TopKIndex | 54.0% | 96 ms | 13 s | 89.5% |
-| 30,000 | TopKIndex | 51.5% | 105 ms | 34 s | 86.5% |
+| 1,000 | Index | 66.0% | 40 ms | 1 s | – |
+| 3,000 | Index | 58.3% | 47 ms | 2 s | – |
+| 10,000 | TopKIndex | 53.3% | 85 ms | 10 s | 89.5% |
+| 30,000 | TopKIndex | 51.0% | 96 ms | 28 s | 86.5% |
 <!-- /table:scale -->
 
 The same task with 150 definitions, next to the tools that were measured on it:
@@ -362,11 +389,11 @@ The same task with 150 definitions, next to the tools that were measured on it:
 <!-- table:scale150 -->
 | Options | DecideKV | OpenJev architecture | CLM-8B as released | CLM-8B, heads fine-tuned |
 |---|---|---|---|---|
-| 200 | 72.7% · 40 ms | 63.3% · 132 ms | 12.7% · 21 ms | 26.0% · 21 ms |
-| 1,000 | 62.0% · 41 ms | not supported (max 255) | 4.7% · 21 ms | 16.7% · 21 ms |
-| 3,000 | 57.3% · 50 ms | not supported (max 255) | 4.0% · 21 ms | 10.7% · 21 ms |
-| 10,000 | 50.7% · 81 ms | not supported (max 255) | 3.3% · 21 ms | 8.7% · 21 ms |
-| 30,000 | 46.0% · 103 ms | not supported (max 255) | not measured | not measured |
+| 200 | 74.7% · 37 ms | 63.3% · 132 ms | 12.7% · 21 ms | 26.0% · 21 ms |
+| 1,000 | 58.7% · 39 ms | not supported (max 255) | 4.7% · 21 ms | 16.7% · 21 ms |
+| 3,000 | 60.7% · 46 ms | not supported (max 255) | 4.0% · 21 ms | 10.7% · 21 ms |
+| 10,000 | 52.7% · 81 ms | not supported (max 255) | 3.3% · 21 ms | 8.7% · 21 ms |
+| 30,000 | 48.0% · 89 ms | not supported (max 255) | not measured | not measured |
 <!-- /table:scale150 -->
 
 ### Training the catalogue
@@ -376,11 +403,11 @@ Banking77, catalogue trained with `kv.train` on the public training split:
 <!-- table:training -->
 | Banking77, 300 test messages | Untrained catalogue | Trained catalogue |
 |---|---|---|
-| Catalogue alone (no LLM call) | 65.7% · 15 ms | 93.0% · 16 ms |
-| Catalogue top-5, then LLM | 61.7% · 84 ms | 61.0% · 84 ms |
-| Catalogue top-50, then LLM | 56.0% · 126 ms | 53.3% · 125 ms |
+| Catalogue alone (no LLM call) | 65.7% · 15 ms | 93.0% · 15 ms |
+| Catalogue top-5, then LLM | 62.3% · 84 ms | 61.0% · 84 ms |
+| Catalogue top-50, then LLM | 58.3% · 133 ms | 55.3% · 131 ms |
 | Validation accuracy during training | 71.2% | 92.4% |
-| Cost of training | – | 10,003 examples, 94 s in total (18 s of training, the rest is embedding the examples) |
+| Cost of training | – | 10,003 examples, 92 s in total (17 s of training, the rest is embedding the examples) |
 <!-- /table:training -->
 
 After training the catalogue is more accurate alone than followed by the LLM, and it answers in the time of one
@@ -392,18 +419,18 @@ A catalogue trained with the examples of half of the intents only:
 <!-- table:heldout -->
 | Intent of the test message | Untrained catalogue | Trained on half of the intents, no fallback | Trained on half of the intents, fallback (default) | Decisions that fell back to the LLM |
 |---|---|---|---|---|
-| Had training examples (39 intents) | 66.0% · 15 ms | 95.4% · 15 ms | 86.3% · 16 ms | 15.0% |
-| Had no training example (38 intents) | 65.3% · 15 ms | 21.1% · 15 ms | 59.9% · 83 ms | 63.9% |
+| Had training examples (39 intents) | 66.0% · 16 ms | 95.4% · 16 ms | 85.0% · 16 ms | 15.0% |
+| Had no training example (38 intents) | 65.3% · 16 ms | 21.1% · 16 ms | 61.2% · 84 ms | 63.9% |
 <!-- /table:heldout -->
 
 Without the fallback the head trained on half of the intents gets the other half wrong: it picks an intent it
 was trained on, with high confidence, so the confidence cannot flag these errors. The fallback uses another signal:
 the head records which options had examples, and when the untrained catalogue prefers an option without examples
 and disagrees with the trained one, the LLM chooses among the 5 best options of each catalogue. On the intents
-without examples this raises the accuracy from 21.1% to 59.9%; on the intents with examples it costs 9 points,
+without examples this raises the accuracy from 21.1% to 61.2%; on the intents with examples it costs 10 points,
 because the LLM re-chooses some cases the trained catalogue had right. Over all 300 messages: 59.0% without the
 fallback, 73.3% with it, 65.7% for the untrained catalogue. A head trained on every option never falls back (93.0%
-in 16 ms, as above). `fallback=0` switches it off.
+in 15 ms, as above). `fallback=0` switches it off.
 
 ### Training the catalogue on typed questions
 
@@ -471,7 +498,7 @@ Decisions this is more accurate and faster than one question per call with the o
 <!-- table:order -->
 | Typed Decisions, 2,000 decisions | Qwen3-8B | Qwen3.8-27B (hybrid) |
 |---|---|---|
-| Options first, one question per call | 51.1% · 62 ms | 69.6% · 249 ms |
+| Options first, one question per call | 51.0% · 62 ms | 69.6% · 249 ms |
 | **State first, the five questions of a case in one call** (`decide` default) | 56.7% · 41 ms | 70.4% · 193 ms |
 | OpenJev architecture (state first, one question per call) | 59.3% · 67 ms | 69.1% · 307 ms |
 <!-- /table:order -->
@@ -481,26 +508,64 @@ A turn of 15 questions about one state, with a short and a long state (the state
 <!-- table:turn -->
 | Turn of 15 questions (4 `Score`, 11 `Noul`) on one state | Short state (99 characters) | Long state (3,177 characters) |
 |---|---|---|
-| Qwen3-8B, options first | 330 ms | 2,537 ms |
-| Qwen3-8B, state first (`auto`) | 171 ms | 329 ms |
-| Qwen3-8B on `llama-server`, options first | 430 ms | 904 ms |
-| Qwen3-8B on `llama-server`, state first (`auto`) | 466 ms | 615 ms |
-| Qwen3.8-27B (hybrid), options first | 1,198 ms | 11,105 ms |
-| Qwen3.8-27B (hybrid), state first (`auto`) | 916 ms | 1,591 ms |
+| Qwen3-8B, options first | 337 ms | 2,615 ms |
+| Qwen3-8B, state first (`auto`) | 174 ms | 338 ms |
+| Qwen3-8B on `llama-server`, options first | 466 ms | 753 ms |
+| Qwen3-8B on `llama-server`, state first (`auto`) | 389 ms | 584 ms |
+| Qwen3.8-27B (hybrid), options first | 1,198 ms | 11,179 ms |
+| Qwen3.8-27B (hybrid), state first (`auto`) | 763 ms | 1,440 ms |
 <!-- /table:turn -->
 
 In process the questions that share the state are answered as a prefix tree: the state is evaluated once, the
 instructions and options of a list used by several questions once (here one block for the 4 `Score` and one for the
 11 `Noul`), and the questions themselves in parallel sequences of one `llama_decode`. With a long state this is
-about eight times faster than the options-first order on Qwen3-8B and seven times on the 27B; with a very short state
-it is still faster (171 against 330 ms, 916 against 1,198 ms). On the hybrid 27B llama.cpp slows down beyond eight
-sequences, so the questions run five at a time and the gain is smaller. Questions answered by option name (`Choice`
+about eight times faster than the options-first order on both models; with a very short state it is still faster
+(174 against 337 ms, 763 against 1,198 ms). On the hybrid 27B llama.cpp slows down beyond eight sequences, so the
+questions run in groups and the least recently used resident lists are freed when the tree needs the sequences. Questions answered by option name (`Choice`
 with labels off) are decoded token by token and stay outside the batch. Every turn has a new state, so no engine
 can reuse the state of the previous turn.
 
 On `llama-server` there is no prefix tree: the questions go one by one, and the server reuses the common prefix of
 consecutive prompts in a slot (the 11 `Noul` questions share a slot, state included), which is why its options-first
 order loses less with a long state.
+
+### Semantic cache
+
+A stream of messages answered by Qwen3-8B; a message whose embedding has a cosine of at least the threshold with one
+already answered gets the stored answer (`results/semcache_*.json`). Accuracy over the stream · mean time per decision
+(share of answers reused):
+
+| | LLM alone | Cache 0.98 | Cache 0.95 | Cache 0.90 | Catalogue trained on the LLM's answers |
+|---|---|---|---|---|---|
+| Banking77 (3,300 messages) | 62.5% · 67 ms | 62.7% (10%) | 62.5% · 57 ms (37%) | 62.6% · 36 ms (69%) | 58.0% · 15 ms |
+| CLINC150 (4,500 messages, 150 intents) | 79.8% · 53 ms | 79.7% (17%) | 80.0% · 34 ms (47%) | 77.9% · 20 ms (74%) | 80.3% · 6 ms |
+| Typed Decisions (structured, 8,000 decisions) | 57.9% · 42 ms | 56.1% (16%) | 53.1% · 21 ms (54%) | 50.2% · 9 ms (81%) | 50.4% · 57 ms |
+
+On short natural-language messages the cache at 0.95 keeps the LLM's accuracy with 37 to 47% of the answers reused,
+and the catalogue trained on the LLM's answers is 4 to 9 times faster than the LLM (from 4.5 points less accurate to
+slightly more).
+On structured states the cache loses accuracy even at 0.98: states with almost the same text can need different
+answers. (The catalogue row for Banking77 and CLINC150 is trained on the LLM's answers of the stream's training
+messages; for Typed Decisions it is the 8B-taught catalogue of the typed-training table.)
+
+### Question before the state
+
+With the options first, the question can go before the state (one constant prefix: instructions, options, question)
+or after it. Same model and data, each message answered in both orders; the paired test counts the messages answered
+right in only one of the two (`results/question_first_qwen3_8b.json`):
+
+| Qwen3-8B | Question after the state | Question before the state (default) | Right only after / only before | p (McNemar) |
+|---|---|---|---|---|
+| Banking77, 3,080 messages | 65.1% · 66 ms | 65.5% · 65 ms | 72 / 85 | 0.34 |
+| CLINC150, 4,500 messages | 80.0% · 55 ms | 81.4% · 54 ms | 107 / 170 | 0.0002 |
+| Typed Decisions, 2,000 decisions | 51.0% · 66 ms | 51.1% · 62 ms | 133 / 136 | 0.90 |
+
+The question before the state is never worse, significantly better on CLINC150 and slightly faster (about 11 tokens
+fewer per decision), so it is the default when a list is used with its own question (`question_first=False` restores
+the other order). The results of this README with one question per list (Banking77, WordNet, CLINC150, the aim game,
+growing lists) were measured with it; when several questions share a list, the question stays after the state: a
+prefix per question made a turn of 15 questions over two lists more than twice as slow, because the prefixes evicted
+each other from the seven resident slots.
 
 ### Engine: resident prefix on any architecture
 
@@ -510,9 +575,9 @@ recomputed at every decision:
 <!-- table:engine -->
 | Model | Architecture | Banking77, list resident | Banking77, prompt recomputed |
 |---|---|---|---|
-| Qwen3-8B (36 attention layers) | qwen3 | 63.0% · 65 ms | 66.0% · 137 ms |
-| Qwen3.8-27B (hybrid: recurrent + attention layers, IQ2_S) | qwen35 | 76.0% · 161 ms | 76.0% · 475 ms |
-| Qwen3-8B on `llama-server` (8 slots) | qwen3 | 63.0% · 75 ms | not measured |
+| Qwen3-8B (36 attention layers) | qwen3 | 69.0% · 64 ms | 69.0% · 155 ms |
+| Qwen3.8-27B (hybrid: recurrent + attention layers, IQ2_S) | qwen35 | 73.0% · 157 ms | 73.0% · 538 ms |
+| Qwen3-8B on `llama-server` (8 slots) | qwen3 | 68.0% · 74 ms | not measured |
 <!-- /table:engine -->
 
 On Qwen3-8B the two Banking77 accuracies differ by three messages out of 100: llama.cpp evaluates the tail of the
@@ -521,9 +586,9 @@ which moves probabilities by up to a few hundredths on near ties. On the hybrid 
 
 ### Reading the numbers
 
-- Without training, DecideKV is ahead of the OpenJev architecture on three tasks out of four. On Typed Decisions
-  (few options per question, five different questions per case) it is behind with Qwen3-8B and ahead with the
-  27B model.
+- Without training, DecideKV is at least as accurate as the OpenJev architecture in six of the seven comparisons
+  and 1.4 to 5.7 times faster; it is behind only on Typed Decisions with Qwen3-8B (few options per question, five
+  different questions per case).
 - It keeps working where OpenJev stops (255 options) and where the list no longer fits in memory.
 - CLM-8B with heads fine-tuned on the task is ahead of untrained DecideKV where a training set exists (Banking77,
   Typed Decisions). The trained catalogue of DecideKV is ahead of it on both.

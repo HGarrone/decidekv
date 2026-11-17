@@ -16,7 +16,7 @@ The library does not introduce a new mechanism. It assembles published technique
 
 On one consumer GPU and one 8B model, the untrained tool is ahead of the OpenJev architecture on three tasks out of
 four, runs on lists where OpenJev does not, and is far ahead of CLM-8B as released. With the catalogue trained on
-Banking77 it reaches 93.0% in 16 ms per decision, above CLM-8B with heads fine-tuned on the same task (84.3%). On
+Banking77 it reaches 93.0% in 15 ms per decision, above CLM-8B with heads fine-tuned on the same task (84.3%). On
 Typed Decisions the catalogue trained on the typed questions reaches 75.6% with no LLM call (CLM-8B fine-tuned:
 71.0%), and trained on the answers of an LLM, without any human label, it keeps about the accuracy of its teacher.
 
@@ -126,14 +126,14 @@ together.
 <!-- table:comparison -->
 | Method | Training | Banking77 (77 intents) | WordNet (200 words) | Typed Decisions | Aim game (games won, time per shot) |
 |---|---|---|---|---|---|
-| **DecideKV** | none | 60.7% · 65 ms | 70.7% · 38 ms | 56.7% · 41 ms | 95.0% · 159 ms |
-| **DecideKV, trained catalogue** | on the task | 93.0% · 16 ms | – | 75.6% · 57 ms | – |
+| **DecideKV** | none | 63.0% · 64 ms | 74.7% · 36 ms | 56.7% · 41 ms | 100.0% · 160 ms |
+| **DecideKV, trained catalogue** | on the task | 93.0% · 15 ms | – | 75.6% · 57 ms | – |
 | OpenJev architecture, shared prompt | none | 39.7% · 90 ms | 63.3% · 132 ms | 59.3% · 67 ms | 25.0% · 423 ms |
 | OpenJev library, own prompt, Ollama | none | 44.0% · 117 ms | 22.7% · 164 ms | 58.1% · 62 ms | 25.0% · 469 ms |
 | CLM-8B as released | none | 4.3% · 35 ms | 12.7% · 21 ms | 36.8% · 79 ms | 15.0% · 124 ms |
 | CLM-8B, heads fine-tuned | on the task | 84.3% · 21 ms | 26.0% · 21 ms | 71.0% · 79 ms | – |
 | Embedding model alone | none | 65.7% · 16 ms | – | – | – |
-| Embedding top-50, then LLM | none | 56.3% · 127 ms | – | – | – |
+| Embedding top-50, then LLM | none | 58.3% · 127 ms | – | – | – |
 | State-first prompt, constrained decoding | none | 61.0% · 138 ms | – | – | – |
 | Cross-encoder, one LLM call per option (30 messages) | none | 70.0% · 1,589 ms | – | – | – |
 <!-- /table:comparison -->
@@ -145,7 +145,7 @@ it on Typed Decisions, where every case asks five different questions with few o
 below both on the four tasks; with heads fine-tuned on the task it is ahead of untrained DecideKV on Banking77 and
 Typed Decisions. The trained catalogue of DecideKV is ahead of it on both. On Typed Decisions DecideKV answers the
 five questions of a case in one `decide` call, which puts the state first (the default); one question per call with
-the options first gives 51.1% (see the section on prompt order).
+the options first gives 51.0% (see the section on prompt order).
 
 ### The same comparison on a hybrid 27B model
 
@@ -156,7 +156,7 @@ aim game, so that the 9.3 GB of weights and the cache fit in 12 GB:
 <!-- table:hybrid27b -->
 | Method | Banking77 (77 intents) | WordNet (200 words) | Typed Decisions | Aim game (games won, time per shot) |
 |---|---|---|---|---|
-| **DecideKV** | 73.0% · 161 ms | 82.7% · 106 ms | 70.4% · 193 ms | 100.0% · 340 ms |
+| **DecideKV** | 72.0% · 163 ms | 84.7% · 106 ms | 70.4% · 193 ms | 100.0% · 339 ms |
 | OpenJev architecture, shared prompt | 45.7% · 409 ms | 84.0% · 600 ms | 69.1% · 307 ms | not measured: over two hours (the whole grid is recomputed at every shot) |
 <!-- /table:hybrid27b -->
 
@@ -168,10 +168,10 @@ filled the 12 GB and part of the cache spilled into system memory. Keep `n_ctx` 
 <!-- table:scale -->
 | Options | Index chosen by `KV.index` | Accuracy | Time per decision | Index build | Right answer among the 50 candidates |
 |---|---|---|---|---|---|
-| 1,000 | Index | 66.7% | 43 ms | 1 s | – |
-| 3,000 | Index | 56.3% | 51 ms | 2 s | – |
-| 10,000 | TopKIndex | 54.0% | 96 ms | 13 s | 89.5% |
-| 30,000 | TopKIndex | 51.5% | 105 ms | 34 s | 86.5% |
+| 1,000 | Index | 66.0% | 40 ms | 1 s | – |
+| 3,000 | Index | 58.3% | 47 ms | 2 s | – |
+| 10,000 | TopKIndex | 53.3% | 85 ms | 10 s | 89.5% |
+| 30,000 | TopKIndex | 51.0% | 96 ms | 28 s | 86.5% |
 <!-- /table:scale -->
 
 The time per decision goes from about 40 ms at 1,000 options to about 100 ms at 30,000. Building the index takes
@@ -180,11 +180,11 @@ seconds: one pass over the list, or one embedding per option. Accuracy falls as 
 <!-- table:scale150 -->
 | Options | DecideKV | OpenJev architecture | CLM-8B as released | CLM-8B, heads fine-tuned |
 |---|---|---|---|---|
-| 200 | 72.7% · 40 ms | 63.3% · 132 ms | 12.7% · 21 ms | 26.0% · 21 ms |
-| 1,000 | 62.0% · 41 ms | not supported (max 255) | 4.7% · 21 ms | 16.7% · 21 ms |
-| 3,000 | 57.3% · 50 ms | not supported (max 255) | 4.0% · 21 ms | 10.7% · 21 ms |
-| 10,000 | 50.7% · 81 ms | not supported (max 255) | 3.3% · 21 ms | 8.7% · 21 ms |
-| 30,000 | 46.0% · 103 ms | not supported (max 255) | not measured | not measured |
+| 200 | 74.7% · 37 ms | 63.3% · 132 ms | 12.7% · 21 ms | 26.0% · 21 ms |
+| 1,000 | 58.7% · 39 ms | not supported (max 255) | 4.7% · 21 ms | 16.7% · 21 ms |
+| 3,000 | 60.7% · 46 ms | not supported (max 255) | 4.0% · 21 ms | 10.7% · 21 ms |
+| 10,000 | 52.7% · 81 ms | not supported (max 255) | 3.3% · 21 ms | 8.7% · 21 ms |
+| 30,000 | 48.0% · 89 ms | not supported (max 255) | not measured | not measured |
 <!-- /table:scale150 -->
 
 ![Accuracy and time against the number of options](fig_scaling.png)
@@ -196,11 +196,11 @@ In the right panel the two CLM-8B lines coincide: the fine-tuned heads cost the 
 <!-- table:training -->
 | Banking77, 300 test messages | Untrained catalogue | Trained catalogue |
 |---|---|---|
-| Catalogue alone (no LLM call) | 65.7% · 15 ms | 93.0% · 16 ms |
-| Catalogue top-5, then LLM | 61.7% · 84 ms | 61.0% · 84 ms |
-| Catalogue top-50, then LLM | 56.0% · 126 ms | 53.3% · 125 ms |
+| Catalogue alone (no LLM call) | 65.7% · 15 ms | 93.0% · 15 ms |
+| Catalogue top-5, then LLM | 62.3% · 84 ms | 61.0% · 84 ms |
+| Catalogue top-50, then LLM | 58.3% · 133 ms | 55.3% · 131 ms |
 | Validation accuracy during training | 71.2% | 92.4% |
-| Cost of training | – | 10,003 examples, 94 s in total (18 s of training, the rest is embedding the examples) |
+| Cost of training | – | 10,003 examples, 92 s in total (17 s of training, the rest is embedding the examples) |
 <!-- /table:training -->
 
 Three facts follow from the table.
@@ -217,18 +217,18 @@ A catalogue trained with the examples of half of the intents only:
 <!-- table:heldout -->
 | Intent of the test message | Untrained catalogue | Trained on half of the intents, no fallback | Trained on half of the intents, fallback (default) | Decisions that fell back to the LLM |
 |---|---|---|---|---|
-| Had training examples (39 intents) | 66.0% · 15 ms | 95.4% · 15 ms | 86.3% · 16 ms | 15.0% |
-| Had no training example (38 intents) | 65.3% · 15 ms | 21.1% · 15 ms | 59.9% · 83 ms | 63.9% |
+| Had training examples (39 intents) | 66.0% · 16 ms | 95.4% · 16 ms | 85.0% · 16 ms | 15.0% |
+| Had no training example (38 intents) | 65.3% · 16 ms | 21.1% · 16 ms | 61.2% · 84 ms | 63.9% |
 <!-- /table:heldout -->
 
 Without the fallback the head trained on half of the intents gets the other half wrong: it picks an intent it
 was trained on, with high confidence, so the confidence cannot flag these errors. The fallback uses another signal:
 the head records which options had examples, and when the untrained catalogue prefers an option without examples
 and disagrees with the trained one, the LLM chooses among the 5 best options of each catalogue. On the intents
-without examples this raises the accuracy from 21.1% to 59.9%; on the intents with examples it costs 9 points,
+without examples this raises the accuracy from 21.1% to 61.2%; on the intents with examples it costs 10 points,
 because the LLM re-chooses some cases the trained catalogue had right. Over all 300 messages: 59.0% without the
 fallback, 73.3% with it, 65.7% for the untrained catalogue. A head trained on every option never falls back (93.0%
-in 16 ms, as above). `fallback=0` switches it off.
+in 15 ms, as above). `fallback=0` switches it off.
 A trained catalogue works best when the examples cover the options.
 
 ### Training the catalogue on typed questions
@@ -300,7 +300,7 @@ follow it. On Typed Decisions the five questions of a case go in one call:
 <!-- table:order -->
 | Typed Decisions, 2,000 decisions | Qwen3-8B | Qwen3.8-27B (hybrid) |
 |---|---|---|
-| Options first, one question per call | 51.1% · 62 ms | 69.6% · 249 ms |
+| Options first, one question per call | 51.0% · 62 ms | 69.6% · 249 ms |
 | **State first, the five questions of a case in one call** (`decide` default) | 56.7% · 41 ms | 70.4% · 193 ms |
 | OpenJev architecture (state first, one question per call) | 59.3% · 67 ms | 69.1% · 307 ms |
 <!-- /table:order -->
@@ -313,20 +313,20 @@ A turn of 15 questions about one state, with a short and a long state (the state
 <!-- table:turn -->
 | Turn of 15 questions (4 `Score`, 11 `Noul`) on one state | Short state (99 characters) | Long state (3,177 characters) |
 |---|---|---|
-| Qwen3-8B, options first | 330 ms | 2,537 ms |
-| Qwen3-8B, state first (`auto`) | 171 ms | 329 ms |
-| Qwen3-8B on `llama-server`, options first | 430 ms | 904 ms |
-| Qwen3-8B on `llama-server`, state first (`auto`) | 466 ms | 615 ms |
-| Qwen3.8-27B (hybrid), options first | 1,198 ms | 11,105 ms |
-| Qwen3.8-27B (hybrid), state first (`auto`) | 916 ms | 1,591 ms |
+| Qwen3-8B, options first | 337 ms | 2,615 ms |
+| Qwen3-8B, state first (`auto`) | 174 ms | 338 ms |
+| Qwen3-8B on `llama-server`, options first | 466 ms | 753 ms |
+| Qwen3-8B on `llama-server`, state first (`auto`) | 389 ms | 584 ms |
+| Qwen3.8-27B (hybrid), options first | 1,198 ms | 11,179 ms |
+| Qwen3.8-27B (hybrid), state first (`auto`) | 763 ms | 1,440 ms |
 <!-- /table:turn -->
 
 In process the questions that share the state are answered as a prefix tree: the state is evaluated once, the
 instructions and options of a list used by several questions once (here one block for the 4 `Score` and one for the
 11 `Noul`), and the questions themselves in parallel sequences of one `llama_decode`. With a long state this is
-about eight times faster than the options-first order on Qwen3-8B and seven times on the 27B; with a very short state
-it is still faster (171 against 330 ms, 916 against 1,198 ms). On the hybrid 27B llama.cpp slows down beyond eight
-sequences, so the questions run five at a time and the gain is smaller. Questions answered by option name (`Choice`
+about eight times faster than the options-first order on both models; with a very short state it is still faster
+(174 against 337 ms, 763 against 1,198 ms). On the hybrid 27B llama.cpp slows down beyond eight sequences, so the
+questions run in groups and the least recently used resident lists are freed when the tree needs the sequences. Questions answered by option name (`Choice`
 with labels off) are decoded token by token and stay outside the batch. Every turn has a new state, so no engine
 can reuse the state of the previous turn.
 
@@ -342,9 +342,9 @@ recomputed at every decision:
 <!-- table:engine -->
 | Model | Architecture | Banking77, list resident | Banking77, prompt recomputed |
 |---|---|---|---|
-| Qwen3-8B (36 attention layers) | qwen3 | 63.0% · 65 ms | 66.0% · 137 ms |
-| Qwen3.8-27B (hybrid: recurrent + attention layers, IQ2_S) | qwen35 | 76.0% · 161 ms | 76.0% · 475 ms |
-| Qwen3-8B on `llama-server` (8 slots) | qwen3 | 63.0% · 75 ms | not measured |
+| Qwen3-8B (36 attention layers) | qwen3 | 69.0% · 64 ms | 69.0% · 155 ms |
+| Qwen3.8-27B (hybrid: recurrent + attention layers, IQ2_S) | qwen35 | 73.0% · 157 ms | 73.0% · 538 ms |
+| Qwen3-8B on `llama-server` (8 slots) | qwen3 | 68.0% · 74 ms | not measured |
 <!-- /table:engine -->
 
 On Qwen3-8B the two Banking77 accuracies differ by three messages out of 100: llama.cpp evaluates the tail of the

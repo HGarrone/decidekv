@@ -612,6 +612,16 @@ class LlamaCpp:
         seq_b, made = self._base(p0)
         n0 = len(p0)
         free = [s for s in range(1, self.resident + self.scratch + 1) if s not in self.bases]
+        # on models without scratch sequences (hybrid), free the least recently used resident lists so that the
+        # questions can run in parallel; an evicted list is recomputed when it is needed again
+        need = min(len(items) + 1, self.resident - 1)
+        while len(free) < need:
+            victim = next((s for s in self.bases if s != seq_b), None)
+            if victim is None:
+                break
+            self.seq_rm(victim, -1, -1)
+            del self.bases[victim]
+            free.append(victim)
         if len(free) < 2:
             return [self.label_logprobs(seg, labels) for seg, labels in items]
         groups = {}
