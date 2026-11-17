@@ -603,3 +603,20 @@ def test_decide_without_tree_method_or_single_question():
                                                 "b": Noul(instructions="Is it red?")}, order="options")
     assert kv.client.trees == []
     assert kv.client.prefills >= 1
+
+
+def test_cascade_threshold():
+    choice, score, noul, examples = typed_examples()
+    kv = make_kv(embed=FakeEncoder())
+    head = kv.train_questions(examples, epochs=60, batch=32, lr=0.01)
+    qs = {"c": choice, "s": score, "n": noul}
+    r0 = kv.decide("wwww", qs, head=head, threshold=0.0)
+    assert r0.escalated == []
+    assert kv.client.prompts == []
+    r1 = kv.decide("wwww", qs, head=head, threshold=1.01)
+    assert sorted(r1.escalated) == ["c", "n", "s"]
+    assert len(kv.client.prompts) > 0
+    plain = make_kv(embed=FakeEncoder()).decide("wwww", qs)
+    for qid in qs:
+        assert r1.answers[qid] == plain.answers[qid]
+    assert r1.model.endswith("/cascade")

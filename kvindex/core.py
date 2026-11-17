@@ -16,7 +16,7 @@ from typing import Any, Iterable
 
 from .ollama import HYBRID_ARCHS, Ollama
 from .primitives import (Choice, ChoiceAnswer, Noul, NoulAnswer, Response, Score, ScoreAnswer, Usage,
-                         confidence, softmax)
+                         answer_confidence, confidence, softmax)
 
 LETTERS = [chr(c) for c in range(65, 91)] + [chr(c) for c in range(97, 123)]   # 52 single-token labels
 MAX_LABELS = len(LETTERS)
@@ -435,7 +435,8 @@ class KV:
         return idx.choose(state, instructions)
 
     def decide(self, state: Any, questions: dict[str, Any] | Any = None, temperature: float = 1.0,
-               labels: bool = False, full: bool = False, head: Any = None, order: str = "auto") -> Response:
+               labels: bool = False, full: bool = False, head: Any = None, order: str = "auto",
+               threshold: float | None = None) -> Response:
         """OpenJev / Jev-style: several typed questions about one state.
 
         `questions` maps ids to `Choice`, `Score` or `Noul` (these classes, OpenJev's, or plain dicts with a
@@ -444,6 +445,9 @@ class KV:
         answers always carry the probability of every level.
         `head` (from `KV.train_questions`, or the path of its .npz file) answers every question with the trained
         catalogue alone: one embedding call per state, no LLM call.
+        `threshold` with a head makes a cascade: the catalogue answers every question, and the questions whose
+        answer has a confidence below `threshold` (1 - normalised entropy, as in OpenJev) are asked to the LLM in
+        one call; `Response.escalated` lists them.
         `order`: "options" keeps every option list first in the prompt (cached across states); "state" puts the
         state first, shared by all the questions of the call; "auto" (default) puts the state first for the
         questions with a short option list (at most 2,000 characters, or shorter than the state), when there
@@ -454,7 +458,17 @@ class KV:
             if isinstance(head, str):
                 from .train import Head
                 head = Head.load(head)
-            return self._decide_catalog(state, questions, head)
+            cat = self._decide_catalog(state, questions, head)
+            if threshold is None:
+                return cat
+            low = [qid for qid, a in cat.answers.items() if answer_confidence(a) < threshold]
+            if not low:
+                return cat
+            llm = self.decide(state, {qid: questions[qid] for qid in low}, temperature=temperature, labels=labels,
+                              full=full, order=order)
+            answers = {qid: llm.answers.get(qid, a) for qid, a in cat.answers.items()}
+            return Response(model=f"kvindex/{self.model}/cascade", answers=answers, usage=llm.usage,
+                            latency_ms=round(cat.latency_ms + llm.latency_ms, 2), escalated=low)
         t0 = time.perf_counter()
         usage, answers = Usage(), {}
         items = [(qid,) + tuple(self.question_index(q, labels=labels, warm=False)) for qid, q in questions.items()]

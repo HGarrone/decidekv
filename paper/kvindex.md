@@ -261,6 +261,29 @@ decisions); the trained catalogue answers alone, with no LLM call.
    pass of 42 minutes done once.
 3. Training took 10 minutes, of which a little over 2 minutes of optimisation; the rest is embedding the examples.
 
+### Cascade: trained catalogue first, LLM for the uncertain answers
+
+Typed Decisions on Qwen3.8-27B. The head answers every question; the questions whose answer has a confidence (1 -
+normalised entropy) below the threshold go to the LLM in one `decide` call. The 27B model and the embedding model
+do not fit together in 12 GB, so `benchmarks/cascade_bench.py` stores the catalogue's answers and times first and
+then runs the LLM on the questions below each threshold; the times are added.
+
+<!-- table:cascade -->
+| Threshold | Head trained on the answers of the 27B (`kv.teach`) | Head trained on the human labels |
+|---|---|---|
+| 0 (catalogue alone) | 66.6% · 58 ms (0.0% to the LLM) | 75.6% · 59 ms (0.0% to the LLM) |
+| 0.3 | 68.9% · 191 ms (46.5% to the LLM) | 73.4% · 186 ms (58.5% to the LLM) |
+| 0.5 | 71.3% · 251 ms (71.4% to the LLM) | 71.0% · 237 ms (80.6% to the LLM) |
+| 0.7 | 71.3% · 281 ms (84.5% to the LLM) | 70.2% · 254 ms (92.6% to the LLM) |
+| 0.9 | 70.0% · 297 ms (95.3% to the LLM) | 70.8% · 299 ms (98.5% to the LLM) |
+| 1.01 (every question to the LLM) | 70.2% · 260 ms (100.0% to the LLM) | 70.6% · 307 ms (100.0% to the LLM) |
+<!-- /table:cascade -->
+
+With a head trained on the answers of the same LLM, the cascade at threshold 0.5 is slightly more accurate than the
+LLM alone and a little faster: where the head is confident it corrects some answers of the LLM. At 0.3 half of the
+questions never reach the LLM. With a head trained on human labels, which is more accurate than the LLM on this
+task, every question sent to the LLM lowers the accuracy: a cascade pays when the LLM is the better judge.
+
 ### Several questions about one state: prompt order
 
 With the options first, a call answers one question and the state is computed for each question. When a call has
@@ -355,6 +378,8 @@ python benchmarks/train_bench.py
 python benchmarks/typed_train_bench.py --teachers qwen3:8b,hf.co/ISTA-DASLab/Qwen3.8-27B-GSQ-RCO-GGUF:IQ2_S
 python benchmarks/engine_bench.py --models qwen3:8b,hf.co/ISTA-DASLab/Qwen3.8-27B-GSQ-RCO-GGUF:IQ2_S
 python benchmarks/engine_bench.py --backend llamaserver --n-ctx 32768 --slots 8
+python benchmarks/cascade_bench.py --phase catalogue
+python benchmarks/cascade_bench.py --phase llm --llm hf.co/ISTA-DASLab/Qwen3.8-27B-GSQ-RCO-GGUF:IQ2_S --n-ctx 8192
 python benchmarks/report.py                    # tables of this article and of the README
 python paper/figures.py                        # figures
 ```

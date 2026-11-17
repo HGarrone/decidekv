@@ -1,0 +1,74 @@
+{
+  "human/T=0.0": {
+    "acc": 0.7565,
+    "ms": 58.73405000020284,
+    "escalated": 0.0,
+    "decisions": 2000
+  },
+  "human/T=0.3": {
+    "acc": 0.734,
+    "ms": 185.64183999842498,
+    "escalated": 0.5845,
+    "decisions": 2000
+  },
+  "human/T=0.5": {
+    "acc": 0.7105,
+    "ms": 236.72559999977238,
+    "escalated": 0.806,
+    "decisions": 2000
+  },
+  "human/T=0.7": {
+    "acc": 0.702,
+    "ms": 253.6219700006768,
+    "escalated": 0.926,
+    "decisions": 2000
+  },
+  "human/T=0.9": {
+    "acc": 0.7075,
+    "ms": 299.4070200016722,
+    "escalated": 0.985,
+    "decisions": 2000
+  },
+  "human/T=1.01": {
+    "acc": 0.706,
+    "ms": 306.5445499960333,
+    "escalated": 1.0,
+    "decisions": 2000
+  },
+  "teacher-27b/T=0.0": {
+    "acc": 0.666,
+    "ms": 57.722210002248175,
+    "escalated": 0.0,
+    "decisions": 2000
+  },
+  "teacher-27b/T=0.3": {
+    "acc": 0.689,
+    "ms": 190.9518200031016,
+    "escalated": 0.465,
+    "decisions": 2000
+  },
+  "teacher-27b/T=0.5": {
+    "acc": 0.713,
+    "ms": 250.713369998266,
+    "escalated": 0.714,
+    "decisions": 2000
+  },
+  "teacher-27b/T=0.7": {
+    "acc": 0.713,
+    "ms": 280.98023000347894,
+    "escalated": 0.8455,
+    "decisions": 2000
+  },
+  "teacher-27b/T=0.9": {
+    "acc": 0.7005,
+    "ms": 296.5916899993317,
+    "escalated": 0.9535,
+    "decisions": 2000
+  },
+  "teacher-27b/T=1.01": {
+    "acc": 0.7015,
+    "ms": 260.455209997599,
+    "escalated": 1.0,
+    "decisions": 2000
+  }
+}

@@ -417,6 +417,105 @@
           "@engine#ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S/turn15/long/auto|ms"
         ]
       ]
+    },
+    "cascade": {
+      "header": [
+        "Threshold",
+        "Head trained on the answers of the 27B (`kv.teach`)",
+        "Head trained on the human labels"
+      ],
+      "rows": [
+        [
+          "0 (catalogue alone)",
+          [
+            "@cascade_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#teacher-27b/T=0.0|acc_ms",
+            " (",
+            "@cascade_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#teacher-27b/T=0.0|pct:escalated",
+            " to the LLM)"
+          ],
+          [
+            "@cascade_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#human/T=0.0|acc_ms",
+            " (",
+            "@cascade_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#human/T=0.0|pct:escalated",
+            " to the LLM)"
+          ]
+        ],
+        [
+          "0.3",
+          [
+            "@cascade_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#teacher-27b/T=0.3|acc_ms",
+            " (",
+            "@cascade_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#teacher-27b/T=0.3|pct:escalated",
+            " to the LLM)"
+          ],
+          [
+            "@cascade_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#human/T=0.3|acc_ms",
+            " (",
+            "@cascade_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#human/T=0.3|pct:escalated",
+            " to the LLM)"
+          ]
+        ],
+        [
+          "0.5",
+          [
+            "@cascade_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#teacher-27b/T=0.5|acc_ms",
+            " (",
+            "@cascade_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#teacher-27b/T=0.5|pct:escalated",
+            " to the LLM)"
+          ],
+          [
+            "@cascade_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#human/T=0.5|acc_ms",
+            " (",
+            "@cascade_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#human/T=0.5|pct:escalated",
+            " to the LLM)"
+          ]
+        ],
+        [
+          "0.7",
+          [
+            "@cascade_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#teacher-27b/T=0.7|acc_ms",
+            " (",
+            "@cascade_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#teacher-27b/T=0.7|pct:escalated",
+            " to the LLM)"
+          ],
+          [
+            "@cascade_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#human/T=0.7|acc_ms",
+            " (",
+            "@cascade_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#human/T=0.7|pct:escalated",
+            " to the LLM)"
+          ]
+        ],
+        [
+          "0.9",
+          [
+            "@cascade_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#teacher-27b/T=0.9|acc_ms",
+            " (",
+            "@cascade_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#teacher-27b/T=0.9|pct:escalated",
+            " to the LLM)"
+          ],
+          [
+            "@cascade_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#human/T=0.9|acc_ms",
+            " (",
+            "@cascade_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#human/T=0.9|pct:escalated",
+            " to the LLM)"
+          ]
+        ],
+        [
+          "1.01 (every question to the LLM)",
+          [
+            "@cascade_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#teacher-27b/T=1.01|acc_ms",
+            " (",
+            "@cascade_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#teacher-27b/T=1.01|pct:escalated",
+            " to the LLM)"
+          ],
+          [
+            "@cascade_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#human/T=1.01|acc_ms",
+            " (",
+            "@cascade_ISTA-DASLab_Qwen3.8-27B-GSQ-RCO-GGUF_IQ2_S.json#human/T=1.01|pct:escalated",
+            " to the LLM)"
+          ]
+        ]
+      ]
     }
   }
 }

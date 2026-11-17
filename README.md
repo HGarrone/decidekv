@@ -162,6 +162,13 @@ head = kv.train_questions(examples)
 The catalogue then answers in the time of the embedding calls instead of an LLM call per question, with about the
 accuracy of its teacher (see the results).
 
+A trained head and the LLM can also work as a cascade: the head answers every question and only the answers below
+a confidence threshold go to the LLM, in one call (`r.escalated` lists them):
+
+```python
+r = kv.decide(state, questions, head=head, threshold=0.5)
+```
+
 ### Any embedding model
 
 `embed` is the name of an embedding model downloaded by Ollama, or any function that maps a list of texts to
@@ -425,6 +432,29 @@ the options-first prompt of the previous version) and the catalogue learns those
 - Training took 10 minutes, of which a little over 2 minutes of optimisation; the rest is embedding the examples.
   Times per decision are the time of one `decide` call per case divided by its five questions.
 
+### Cascade: trained catalogue first, LLM for the uncertain answers
+
+Typed Decisions on Qwen3.8-27B. The head answers every question; the questions whose answer has a confidence (1 -
+normalised entropy) below the threshold go to the LLM in one `decide` call. The 27B model and the embedding model
+do not fit together in 12 GB, so `benchmarks/cascade_bench.py` stores the catalogue's answers and times first and
+then runs the LLM on the questions below each threshold; the times are added.
+
+<!-- table:cascade -->
+| Threshold | Head trained on the answers of the 27B (`kv.teach`) | Head trained on the human labels |
+|---|---|---|
+| 0 (catalogue alone) | 66.6% · 58 ms (0.0% to the LLM) | 75.6% · 59 ms (0.0% to the LLM) |
+| 0.3 | 68.9% · 191 ms (46.5% to the LLM) | 73.4% · 186 ms (58.5% to the LLM) |
+| 0.5 | 71.3% · 251 ms (71.4% to the LLM) | 71.0% · 237 ms (80.6% to the LLM) |
+| 0.7 | 71.3% · 281 ms (84.5% to the LLM) | 70.2% · 254 ms (92.6% to the LLM) |
+| 0.9 | 70.0% · 297 ms (95.3% to the LLM) | 70.8% · 299 ms (98.5% to the LLM) |
+| 1.01 (every question to the LLM) | 70.2% · 260 ms (100.0% to the LLM) | 70.6% · 307 ms (100.0% to the LLM) |
+<!-- /table:cascade -->
+
+With a head trained on the answers of the same LLM, the cascade at threshold 0.5 is slightly more accurate than the
+LLM alone and a little faster: where the head is confident it corrects some answers of the LLM. At 0.3 half of the
+questions never reach the LLM. With a head trained on human labels, which is more accurate than the LLM on this
+task, every question sent to the LLM lowers the accuracy: a cascade pays when the LLM is the better judge.
+
 ### Several questions about one state: prompt order
 
 `decide` puts the state first when a call has several questions with short option lists (see the usage). On Typed
@@ -541,7 +571,8 @@ kvindex/        the library: core.py (cached index, typed questions), catalog.py
 tests/          offline tests with a fake engine
 examples/       quickstart.py
 benchmarks/     baselines.py (comparison), scale.py (growing lists), train_bench.py (training),
-                typed_train_bench.py (training on typed questions), engine_bench.py (engines, turns),
+                typed_train_bench.py (training on typed questions), cascade_bench.py (cascade),
+                engine_bench.py (engines, turns),
                 checks.py (correctness checks to run first), report.py (tables)
 results/        raw results of every benchmark
 paper/          article and figures

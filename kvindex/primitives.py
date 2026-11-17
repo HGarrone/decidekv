@@ -70,6 +70,8 @@ class Response:
     answers: dict[str, Any]
     usage: Usage
     latency_ms: float
+    # questions the trained catalogue passed to the LLM (cascade)
+    escalated: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -91,3 +93,12 @@ def confidence(probs: list[float]) -> float:
         return 1.0
     h = -sum(p * math.log(p) for p in probs if p > 0)
     return max(0.0, min(1.0, 1.0 - h / math.log(n)))
+
+
+def answer_confidence(answer) -> float:
+    """Confidence of an answer: the `confidence` field of a choice or a score; for a noul, the confidence of the
+    distribution (P(true), P(false))."""
+    if answer.type == "noul":
+        return confidence([answer.noul, 1.0 - answer.noul])
+    else:
+        return float(answer.confidence)
