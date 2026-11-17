@@ -556,6 +556,7 @@ kvindex combines techniques published by others. None of the mechanisms below is
 | Embedding shortlist followed by an LLM choice | the standard retrieve-then-rerank pipeline |
 | Contrastive training of state and option projections | InfoNCE (van den Oord et al., 2018), CLIP (Radford et al., 2021), Contrastive Language Models (CLM-v0.1-8B) |
 | Low-rank correction with an identity start | LoRA (Hu et al., 2021) |
+| Several typed questions scored in one batch over a context encoded once | SharedKV-BT (Wake and Wagle, 2026), LLM2Jev / LLM-as-Jev (Li and Wagle, 2026): concurrent work, found after the prefix tree was written |
 | `Choice` / `Score` / `Noul` question types | OpenJev (MIT licence, © 2026 GPT-AGI). kvindex contains no OpenJev code: the types are written from scratch with the same names for compatibility. |
 
 What this repository adds is the packaging: one interface that selects between the cached list and the catalogue

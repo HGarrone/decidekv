@@ -392,6 +392,10 @@ python paper/figures.py                        # figures
 
 ## References
 
+- N. Wake, J. Wagle. *SharedKV-BT: Node-Local Typed Decisions for Behavior-Tree Agents*. arXiv:2610.07327, 2026.
+  Concurrent work: the context is encoded once and the candidates of all the fields are scored in one batch.
+- Y. Li, J. Wagle. *LLM-as-Jev: LLMs Are Already Jev-Style Decision Models — When and How to Fine-Tune Them*.
+  arXiv:2610.02076, 2026. Concurrent work: Choice/Score/Noul by prefill alone with shared prefixes within a request.
 - N. De Cao, G. Izacard, S. Riedel, F. Petroni. *Autoregressive Entity Retrieval* (GENRE). ICLR 2021.
 - B. J. Chan, C.-T. Chen, J.-H. Cheng, H.-H. Huang. *Don't Do RAG: When Cache-Augmented Generation is All You Need
   for Knowledge Tasks*. 2024.
