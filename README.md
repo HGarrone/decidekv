@@ -487,15 +487,16 @@ then runs the LLM on the questions below each threshold; the times are added.
 | 1.01 (every question to the LLM) | 70.2% · 260 ms (100.0% to the LLM) | 70.6% · 307 ms (100.0% to the LLM) |
 <!-- /table:cascade -->
 
-With a head trained on the answers of the same LLM, the cascade at threshold 0.5 is slightly more accurate than the
-LLM alone and a little faster: where the head is confident it corrects some answers of the LLM. At 0.3 half of the
+With a head trained on the answers of the same LLM, the cascade at threshold 0.5 is as accurate as the LLM alone
+within the measurement uncertainty (71.3% against 70.2%, about ±2 points) and slightly faster. At 0.3 half of the
 questions never reach the LLM. With a head trained on human labels, which is more accurate than the LLM on this
 task, every question sent to the LLM lowers the accuracy: a cascade pays when the LLM is the better judge.
 
 ### Several questions about one state: prompt order
 
 `decide` puts the state first when a call has several questions with short option lists (see the usage). On Typed
-Decisions this is more accurate and faster than one question per call with the options first:
+Decisions this is faster than one question per call with the options first on both models, and more accurate on
+Qwen3-8B (on the 27B the difference is within the measurement uncertainty):
 
 <!-- table:order -->
 | Typed Decisions, 2,000 decisions | Qwen3-8B | Qwen3.8-27B (hybrid) |
@@ -588,15 +589,38 @@ which moves probabilities by up to a few hundredths on near ties. On the hybrid 
 
 ### Reading the numbers
 
-- Without training, DecideKV is at least as accurate as the OpenJev architecture in six of the seven comparisons
-  and 1.4 to 5.7 times faster; it is behind only on Typed Decisions with Qwen3-8B (few options per question, five
-  different questions per case).
+- Without training, DecideKV is faster than the OpenJev architecture on every task (1.4 to 5.7 times). Within the
+  measurement uncertainty it is more accurate on four of the seven comparisons (8B: Banking77, WordNet-200, aim game;
+  27B: Banking77), as accurate on two (27B: WordNet-200, Typed Decisions) and less accurate on one (8B: Typed
+  Decisions, -2.7 ± 2.0 points; few options per question, five different questions per case).
 - It keeps working where OpenJev stops (255 options) and where the list no longer fits in memory.
 - CLM-8B with heads fine-tuned on the task is ahead of untrained DecideKV where a training set exists (Banking77,
   Typed Decisions). The trained catalogue of DecideKV is ahead of it on both.
-- With 600 queries one accuracy has a standard error of about 2 points, with 150 queries about 4. Times vary
-  between sessions on the same machine: the same configuration at 10,000 options measured between 84 and 99 ms on
-  one day, with identical accuracy in every repetition.
+
+### Measurement uncertainty
+
+Type A uncertainty, as in the GUM, on three worst cases for DecideKV (`benchmarks/uncertainty_bench.py`, five runs of
+each case on the same items; `results/uncertainty.json`). Two components are combined in quadrature: repeatability
+(standard deviation over the runs) and finite test set (standard deviation over 2,000 bootstrap resamples of the
+items). U is the expanded uncertainty, k = 2; accuracy in percentage points.
+
+| Case | Items | Accuracy ± U | Time per decision ± U |
+|---|---|---|---|
+| Typed Decisions, Qwen3-8B | 2,000 | 57.1% ± 2.3 | 41.1 ± 0.1 ms |
+| Typed Decisions, OpenJev architecture | 2,000 | 59.8% ± 2.2 | 66.6 ± 0.3 ms |
+| Banking77, Qwen3.8-27B | 300 | 72.0% ± 5.2 | 161.3 ± 4.1 ms |
+| WordNet at 30,000 options, Qwen3-8B | 600 | 51.0% ± 4.1 | 95.5 ± 4.3 ms |
+| DecideKV − OpenJev, Typed Decisions (paired) | 2,000 | −2.7 ± 2.0 points | −25.5 ms |
+
+The uncertainty of an accuracy is dominated by the size of the test set (runs repeat exactly on Banking77 and WordNet,
+within 0.3 points on Typed Decisions); times repeat within 0.1 to 1.5 ms. We assume these values apply to every
+architecture on the same items: about ±5 points of accuracy with 300 items, ±7 with 150, ±2.3 with 2,000. Two methods
+on the same items have correlated test-set errors, so the uncertainty of their difference is smaller than the
+quadrature sum: the paired bootstrap gives ±2.0 points for DecideKV against the OpenJev architecture on Typed
+Decisions (correlation 0.63; McNemar p = 0.002); where the pairing was not measured, the quadrature sum is used as an
+upper bound. Between sessions a method without a cache can move by a few tenths of a point, because llama.cpp reuses
+the start of the previous prompt (the OpenJev architecture gave 59.3% in the comparison table and 59.8% in all five
+runs here).
 
 ## Limits
 
@@ -648,6 +672,7 @@ tests/          offline tests with a fake engine
 examples/       quickstart.py
 benchmarks/     baselines.py (comparison), scale.py (growing lists), train_bench.py (training),
                 typed_train_bench.py (training on typed questions), cascade_bench.py (cascade),
+                uncertainty_bench.py (Type A uncertainty),
                 engine_bench.py (engines, turns),
                 checks.py (correctness checks to run first), report.py (tables)
 results/        raw results of every benchmark

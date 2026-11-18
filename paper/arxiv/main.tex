@@ -30,8 +30,9 @@ be versatile and ready to use: one call, any GGUF model that llama.cpp runs (hyb
 from two to tens of thousands of options, and the \texttt{Choice}/\texttt{Score}/\texttt{Noul} question types of
 OpenJev. It works without any training, and it can be trained like CLM when examples exist---or without examples, by
 letting the LLM label the states. Under equal conditions on one consumer GPU (same model, engine, prompt blocks and
-data), \dkv{} is 1.4 to 5.7 times faster than the OpenJev architecture and at least as accurate on six of the seven
-task--model pairs we could compare (Banking77 with Qwen3-8B: 63.0\% in 64\ms{} against 39.7\% in 90\ms); it scales to
+data), \dkv{} is 1.4 to 5.7 times faster than the OpenJev architecture on every task; within the expanded measurement
+uncertainty it is more accurate on four of the seven task--model pairs we could compare (Banking77 with Qwen3-8B:
+63.0\% in 64\ms{} against 39.7\% in 90\ms), as accurate on two and less accurate on one; it scales to
 30{,}000 options where OpenJev stops at 255; with a catalogue trained in minutes it reaches 93.0\% on Banking77 in
 15\ms{} and 75.6\% on Typed Decisions without any LLM call, above CLM-8B with heads fine-tuned on the same tasks. The
 speed comes from organising the work around the KV cache: option lists stay resident in the cache across states, and
@@ -67,7 +68,8 @@ summarises where it stands; the rest of the paper explains how it works and meas
 \textbf{Pros} & \textbf{Cons} \\
 \midrule
 Free (MIT), on GitHub, \texttt{pip install}, one call. &
-Less accurate than the OpenJev architecture on Typed Decisions with Qwen3-8B (56.7\% vs 59.3\%). \\ \addlinespace[3pt]
+Less accurate than the OpenJev architecture on Typed Decisions with Qwen3-8B ($-2.7 \pm 2.0$ points, paired,
+$k=2$); as accurate on two other comparisons. \\ \addlinespace[3pt]
 1.4--5.7$\times$ faster than the OpenJev architecture; 15 questions about one state in one forward pass. &
 Without training, below CLM-8B fine-tuned on the task where a training set exists. \\ \addlinespace[3pt]
 Any GGUF model in llama.cpp, hybrid recurrent models included; any embedding model; three engines. &
@@ -305,20 +307,56 @@ options after it, answer read from the logit of the first token of each option) 
 engine; it is not the OpenJev library. The rows ``OpenJev library'' (its own prompt, through Ollama) and ``CLM-8B''
 (Qwen3-8B with the released CLM-v0.1-8B heads, as released or with heads fine-tuned on the task) come from earlier
 measurements on the same machine and weights. Every cell reports accuracy and the median time of one decision.
-With 300 queries one accuracy has a standard error of about 3 points; times vary by a few percent between sessions.
+
+\paragraph{Measurement uncertainty.} We estimate a Type A uncertainty, as in the GUM, on three worst cases for \dkv{}
+(Table~\ref{tab:uncertainty}): every case is run five times on the same items. Two components are combined in
+quadrature: the repeatability (standard deviation of the per-run accuracy, or of the per-run median time) and the
+finite test set (standard deviation over 2{,}000 bootstrap resamples of the items). The expanded uncertainty is
+$U = 2u_c$. Accuracy repeats exactly from run to run on Banking77 and WordNet and within 0.3 points on Typed Decisions
+(the resident prefixes split the computation at slightly different points); its uncertainty is dominated by the size
+of the test set. Times repeat within 0.1--1.5\ms. We assume that these values apply to every architecture on the same
+items. Two methods measured on the same items have correlated test-set errors, so the uncertainty of their difference
+is smaller than the quadrature sum of their uncertainties: for \dkv{} against the OpenJev architecture on Typed
+Decisions the paired bootstrap gives $-2.7 \pm 2.0$ points (correlation 0.63; McNemar $p = 0.002$). Where the pairing
+was not measured we use the quadrature sum, which is an upper bound. On this basis \dkv{} is more accurate than the
+OpenJev architecture on four comparisons (8B: Banking77, WordNet-200, aim game; 27B: Banking77), as accurate within the
+uncertainty on two (27B: WordNet-200, Typed Decisions) and less accurate on one (8B: Typed Decisions); it is faster on
+all seven, by far more than the uncertainty of the times. Between sessions, a method without a cache can move by a
+few tenths of a point because llama.cpp reuses the start of the previous prompt (the OpenJev architecture gave 59.3\%
+in Table~\ref{tab:comparison} and 59.8\% in all five runs of Table~\ref{tab:uncertainty}).
+
+\begin{table}[t]
+\centering\small
+\caption{Type A uncertainty on three worst cases for \dkv{} (five runs each). $U$: expanded uncertainty, $k=2$;
+accuracy in percentage points.}\label{tab:uncertainty}
+\resizebox{\linewidth}{!}{\begin{tabular}{lllll}
+\toprule
+Case & Items & Accuracy $\pm U$ & Time per decision $\pm U$ & Main component \\
+\midrule
+Typed Decisions, Qwen3-8B & 2{,}000 & $57.1\% \pm 2.3$ & $41.1 \pm 0.1$\ms & test set \\
+Typed Decisions, OpenJev architecture & 2{,}000 & $59.8\% \pm 2.2$ & $66.6 \pm 0.3$\ms & test set \\
+Banking77, Qwen3.8-27B & 300 & $72.0\% \pm 5.2$ & $161.3 \pm 4.1$\ms & test set; time: both \\
+WordNet, 30{,}000 options, Qwen3-8B & 600 & $51.0\% \pm 4.1$ & $95.5 \pm 4.3$\ms & test set \\
+\midrule
+\dkv{} $-$ OpenJev, Typed Decisions (paired) & 2{,}000 & $-2.7 \pm 2.0$ points & $-25.5$\ms & \\
+\bottomrule
+\end{tabular}}
+\end{table}
 
 \section{Results}\label{sec:results}
 
 \subsection{Comparison under equal conditions}
 Table~\ref{tab:comparison} compares the methods on Qwen3-8B. Without training, \dkv{} is ahead of the OpenJev
-architecture on Banking77, WordNet and the aim game, and behind it on Typed Decisions; it is 1.4--3.7 times faster.
+architecture on Banking77, WordNet and the aim game, and behind it on Typed Decisions ($-2.7 \pm 2.0$ points,
+Section~3); it is 1.4--3.7 times faster.
 CLM-8B as released is far behind on every task; with heads fine-tuned on the task it is ahead of untrained \dkv{} where
 a training set exists. With a trained catalogue \dkv{} is ahead of fine-tuned CLM-8B on both tasks with training data.
 
 \begin{table}[t]
 \centering\small
 \caption{Accuracy $\cdot$ median time per decision on Qwen3-8B. Bold: the best accuracy and the lowest time of
-each column. ``--'': not applicable or not measured.}\label{tab:comparison}
+each column. ``--'': not applicable or not measured. Expanded uncertainty ($k=2$, Table~\ref{tab:uncertainty}): about
+$\pm 5$ points of accuracy with 300 items, $\pm 7$ with 150, $\pm 2.3$ with 2{,}000; a few ms for the times.}\label{tab:comparison}
 \resizebox{\linewidth}{!}{\begin{tabular}{lllll}
 \toprule
 Method & Banking77 & WordNet-200 & Typed Decisions & Aim game (won) \\
@@ -343,8 +381,8 @@ Cross-encoder (30 messages) & 70.0\% $\cdot$ 1{,}589\ms & -- & -- & -- \\
 \end{figure}
 
 \paragraph{Hybrid 27B model.} On Qwen3.8-27B (Table~\ref{tab:hybrid}) the resident prefix is the only reuse
-available. \dkv{} is ahead of the OpenJev architecture on Banking77, WordNet-200 and Typed Decisions, and 1.6--5.7
-times faster; on the aim game the OpenJev design did not finish in two hours because the whole grid is
+available. \dkv{} is ahead of the OpenJev architecture on Banking77 and as accurate within the uncertainty on
+WordNet-200 and Typed Decisions, and 1.6--5.7 times faster; on the aim game the OpenJev design did not finish in two hours because the whole grid is
 recomputed at every shot, while \dkv{} won every game at 339\ms{} per shot. CLM-8B cannot run here: its heads belong
 to Qwen3-8B.
 
@@ -387,8 +425,9 @@ Options & \dkv & OpenJev arch. & CLM-8B & CLM-8B fine-tuned \\
 \subsection{Resident prefixes and the prefix tree}
 On 100 Banking77 messages a resident list costs 64\ms{} per decision on Qwen3-8B against 155\ms{} when the prompt is
 recomputed, and 157\ms{} against 538\ms{} on the 27B hybrid. Table~\ref{tab:order} shows the effect of the prompt order
-on Typed Decisions: answering the five questions of a case in one call with the state first is more accurate and
-faster than one question per call with the options first, on both models. Table~\ref{tab:turn} shows a turn of 15
+on Typed Decisions: answering the five questions of a case in one call with the state first is faster than one
+question per call with the options first on both models, more accurate on Qwen3-8B (+5.7 points, beyond the
+uncertainty) and as accurate within the uncertainty on the 27B (+0.8 points). Table~\ref{tab:turn} shows a turn of 15
 questions: the prefix tree makes the state-first order faster even with a very short state, and 7.7 times faster with
 a long state on Qwen3-8B (7.8 times on the 27B). Questions answered by option name are decoded token by token and stay
 outside the batch.
@@ -457,8 +496,9 @@ fall to 21.1\%. With the fallback they rise to 61.2\% (64\% of these decisions g
 examples go from 95.4\% to 85.0\%; over all 300 messages, 59.0\% becomes 73.3\% (untrained catalogue: 65.7\%).
 
 \paragraph{Cascade.} On Typed Decisions with the 27B model and a head trained on the 27B's own answers, a threshold
-of 0.5 gives 71.3\% in 251\ms{} against 70.2\% in 260\ms{} for the LLM alone; at 0.3, 68.9\% in 191\ms{} with
-half of the questions answered by the head alone. With a head trained on human labels, which is more accurate than the
+of 0.5 gives 71.3\% in 251\ms{} against 70.2\% in 260\ms{} for the LLM alone (as accurate within the
+uncertainty, $\pm 2$ points, and slightly faster); at 0.3, 68.9\% in 191\ms{} with half of the questions answered by
+the head alone. With a head trained on human labels, which is more accurate than the
 LLM, every question sent to the LLM lowers the accuracy: a cascade pays when the LLM is the better judge. (The 27B and
 the encoder do not fit together in 12\,GB, so the cascade was run in two phases with the same arithmetic.)
 
@@ -587,8 +627,8 @@ $\Delta$ covers the latency of the decision and of its execution.}\label{fig:for
 
 \section{Conclusion}
 \dkv{} is a free tool for a frequent task: fast, constrained, typed decisions with a local LLM. It is ready to use
-with any GGUF model, much faster than the OpenJev architecture and at least as accurate in six of seven
-comparisons, it scales to tens of thousands of options, it needs no training, and it can be trained
+with any GGUF model, much faster than the OpenJev architecture on every task and, within the measurement
+uncertainty, more accurate on four of seven comparisons, as accurate on two and less accurate on one; it scales to tens of thousands of options, it needs no training, and it can be trained
 like CLM---from human labels or from the LLM itself---to answer in milliseconds without calling the LLM. Its weaknesses
 are stated above and in the repository. Treating typed decisions as a KV-cache problem---keep what is shared, compute
 what changes, branch where questions diverge---is the idea behind it. The library, the benchmarks and every result file

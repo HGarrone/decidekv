@@ -287,8 +287,8 @@ then runs the LLM on the questions below each threshold; the times are added.
 | 1.01 (every question to the LLM) | 70.2% · 260 ms (100.0% to the LLM) | 70.6% · 307 ms (100.0% to the LLM) |
 <!-- /table:cascade -->
 
-With a head trained on the answers of the same LLM, the cascade at threshold 0.5 is slightly more accurate than the
-LLM alone and a little faster: where the head is confident it corrects some answers of the LLM. At 0.3 half of the
+With a head trained on the answers of the same LLM, the cascade at threshold 0.5 is as accurate as the LLM alone
+within the measurement uncertainty (71.3% against 70.2%, about ±2 points) and slightly faster. At 0.3 half of the
 questions never reach the LLM. With a head trained on human labels, which is more accurate than the LLM on this
 task, every question sent to the LLM lowers the accuracy: a cascade pays when the LLM is the better judge.
 
@@ -307,8 +307,9 @@ follow it. On Typed Decisions the five questions of a case go in one call:
 | OpenJev architecture (state first, one question per call) | 59.3% · 67 ms | 69.1% · 307 ms |
 <!-- /table:order -->
 
-The state-first order is more accurate on both models, which agrees with the OpenJev architecture being ahead of
-the options-first order on this task with Qwen3-8B. It is also faster, because the five questions share the state.
+The state-first order is more accurate on Qwen3-8B (+5.7 points) and as accurate within the measurement
+uncertainty on the 27B, which agrees with the OpenJev architecture being ahead of the options-first order on this task
+with Qwen3-8B. It is also faster, because the five questions share the state.
 
 A turn of 15 questions about one state, with a short and a long state (the states of nine cases):
 
