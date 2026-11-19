@@ -1,0 +1,17 @@
+{
+ "model": "qwen3:8b",
+ "kw": {},
+ "decisions": 2000,
+ "cases": 400,
+ "acc_one_by_one": 0.511,
+ "acc_parallel": 0.511,
+ "U_acc": 0.022069234996180964,
+ "diff": 0.0,
+ "U_diff": 0.006725490027355183,
+ "only_one_by_one_right": 23,
+ "only_parallel_right": 23,
+ "ms_case_one_by_one": 323.38570000138134,
+ "ms_case_parallel": 311.17379997158423,
+ "ms_total_one_by_one": 128658.760499442,
+ "ms_total_parallel": 122811.94450001931
+}

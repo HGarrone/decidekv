@@ -363,6 +363,8 @@ class KV:
         self._indexes: dict[tuple, Any] = {}
         self._arch_checked = False
         self._encoder = None
+        # options first: answer the labelled questions of one call in parallel sequences (False: one by one)
+        self.batch_options = True
 
     def require_ctx(self, n: int):
         """Grow (never shrink) the shared context size."""
@@ -605,6 +607,23 @@ class KV:
                     Index._account(st, usage)
                     pre[qid] = idx.label_answer(lps, lab)
                     question_ms[qid] = round(tree_ms * n_tok / sum(computed), 2)
+            solo = [
+                (qid, idx, ins)
+                for qid, q, idx, ins in items
+                if qid not in shared and qid not in pre and idx.labels and not (full and q.type == "choice")
+            ]
+            if self.batch_options and len(solo) >= 2 and hasattr(self.client, "label_logprobs_resident"):
+                for qid, idx, ins in solo:
+                    self.client.hold(idx.segments("", ins, "options-first")[0])
+                t_res = time.perf_counter()
+                reqs = [idx.label_request(state, ins, idx.keys, "options-first") for _, idx, ins in solo]
+                results = self.client.label_logprobs_resident(reqs)
+                res_ms = (time.perf_counter() - t_res) * 1000
+                computed = [max(1, st.get("input_tokens", 0)) for _, st in results]
+                for (qid, idx, _), (_, lab), (lps, st), n_tok in zip(solo, reqs, results, computed):
+                    Index._account(st, usage)
+                    pre[qid] = idx.label_answer(lps, lab)
+                    question_ms[qid] = round(res_ms * n_tok / sum(computed), 2)
             for qid, q, idx, instructions in items:
                 if qid in pre:
                     a = pre[qid]

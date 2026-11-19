@@ -718,6 +718,119 @@ class LlamaCpp:
             self.seq_rm(seq, -1, -1)
         return out
 
+    def label_logprobs_resident(self, items):
+        """Single-token label log-probabilities for several prompts whose first segment is an option list kept
+        resident (as in `label_logprobs`), answered together: every distinct first segment stays resident (evaluated
+        once and reused across calls), and the rest of every prompt (state, question, answer head) is evaluated in
+        parallel sequences, each copied from its own prefix, in as few `llama_decode` calls as the free sequences and
+        `n_batch` allow. `items` is a list of (segments, labels); returns one (log-probabilities, stats) per item,
+        like `label_logprobs`. Prompts that cannot run in parallel (fewer than two free sequences) are answered one
+        at a time with `label_logprobs`."""
+        if not items:
+            return []
+        import numpy as np
+        p0 = [None] * len(items)
+        tail = [None] * len(items)
+        key = [None] * len(items)
+        for i in range(len(items)):
+            toks, n = self._split(items[i][0])
+            p0[i] = toks[:n]
+            tail[i] = toks[n:]
+            key[i] = tuple(p0[i])
+            if len(tail[i]) > self.n_batch:
+                raise ValueError("question longer than n_batch tokens")
+        prefixes = list(dict.fromkeys(key))
+        total = self.resident + self.scratch
+        per_chunk = max(1, min(self.resident, total // 2))
+        out = [None] * len(items)
+        for c0 in range(0, len(prefixes), per_chunk):
+            chunk = prefixes[c0:c0 + per_chunk]
+            members = set(chunk)
+            idxs = [i for i in range(len(items)) if key[i] in members]
+            missing = sum(1 for p in chunk if list(p) not in self.bases.values())
+            free = sum(1 for s in range(1, total + 1) if s not in self.bases) - missing
+            need = min(len(idxs), total - len(chunk))
+            while free < need:
+                victim = None
+                for s in self.bases:
+                    if tuple(self.bases[s]) not in members:
+                        victim = s
+                        break
+                if victim is None:
+                    break
+                self.seq_rm(victim, -1, -1)
+                del self.bases[victim]
+                free += 1
+            base_of = {}
+            made = {}
+            for p in chunk:
+                base_of[p], made[p] = self._base(list(p))
+            tails = [s for s in range(1, total + 1) if s not in self.bases]
+            ok = all(self.bases.get(base_of[p]) == list(p) for p in chunk)
+            if not ok or len(tails) < 2:
+                for i in idxs:
+                    out[i] = self.label_logprobs(*items[i])
+                continue
+            room = self.n_ctx - sum(len(t) for t in self.bases.values()) - 64
+            limit = min(self.n_batch, room)
+            paid = set()
+            k = 0
+            while k < len(idxs):
+                group = []
+                used = 0
+                while (k < len(idxs) and len(group) < len(tails) and
+                       used + len(tail[idxs[k]]) <= limit):
+                    group.append(idxs[k])
+                    used += len(tail[idxs[k]])
+                    k += 1
+                if not group:
+                    for i in idxs[k:]:
+                        out[i] = self.label_logprobs(*items[i])
+                    break
+                b = self.batch
+                b.n_tokens = 0
+                for c, i in enumerate(group):
+                    seq = tails[c]
+                    self.seq_rm(seq, -1, -1)
+                    self.seq_cp(base_of[key[i]], seq)
+                    for t, tok in enumerate(tail[i]):
+                        j = b.n_tokens
+                        b.token[j] = tok
+                        b.pos[j] = len(p0[i]) + t
+                        b.n_seq_id[j] = 1
+                        b.seq_id[j][0] = seq
+                        b.logits[j] = int(t == len(tail[i]) - 1)
+                        b.n_tokens += 1
+                rc = self.L.llama_decode(self.ctx, b)
+                if rc != 0:
+                    raise RuntimeError(f"llama_decode failed with code {rc}")
+                logits = np.ctypeslib.as_array(
+                    self.L.llama_get_logits(self.ctx),
+                    shape=(len(group), self.n_vocab))
+                for c, i in enumerate(group):
+                    row = logits[c].astype(np.float64)
+                    m = row.max()
+                    lp = row - (m + np.log(np.sum(np.exp(row - m))))
+                    res = {}
+                    for lab in items[i][1]:
+                        ids = {self.tokenize(v)[0] for v in (lab, " " + lab)}
+                        res[lab] = float(math.log(sum(math.exp(lp[t]) for t in ids)))
+                    computed = len(tail[i])
+                    if key[i] not in paid:
+                        computed += made[key[i]]
+                        paid.add(key[i])
+                    out[i] = (
+                        res,
+                        {
+                            "input_tokens": computed,
+                            "cached_tokens": len(p0[i]) + len(tail[i]) - computed,
+                            "output_tokens": 1
+                        }
+                    )
+                for c in range(len(group)):
+                    self.seq_rm(tails[c], -1, -1)
+        return out
+
 
 # ---------------------------------------------------------------- embedding encoder
 class LlamaCppEncoder:
