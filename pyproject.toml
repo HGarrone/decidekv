@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "decidekv"
-version = "0.1.0"
+version = "1.1.0"
 description = "Fast decisions over many options with a local LLM: the option list lives in the KV cache, an embedding catalogue takes over for large lists, and the catalogue can be trained on your own examples."
 readme = "README.md"
 license = { text = "MIT" }

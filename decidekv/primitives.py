@@ -74,6 +74,8 @@ class Response:
     escalated: list[str] = field(default_factory=list)
     # questions answered from the semantic cache (no LLM call)
     cached: list[str] = field(default_factory=list)
+    # time of every question in ms (an estimate for the questions answered together in one prefix-tree pass)
+    question_ms: dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return asdict(self)

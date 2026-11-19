@@ -49,6 +49,30 @@ class Head:
         z = np.load(path)
         return cls(z["us"], z["vs"], z["uo"], z["vo"], json.loads(str(z["report"])))
 
+    def calibrate(self, kv, examples, target=0.95, min_n=20):
+        """Per-question confidence thresholds for the cascade (`KV.decide(..., head=head, threshold="calibrated")`):
+        on held-out `examples`, a list of (state, questions, gold) with `questions` a dict {qid: question} and `gold`
+        a dict {qid: reference answer} (a key, or a boolean for yes/no questions), the catalogue alone answers every
+        question; for every question id the lowest confidence that keeps at least `target` agreement with the
+        reference is stored in `self.report["thresholds"]` (saved with the head). Returns the thresholds."""
+        from .primitives import answer_confidence
+        records = []
+        for state, questions, gold in examples:
+            r = kv._decide_catalog(state, questions, self)
+            for qid in questions:
+                a = r.answers[qid]
+                records.append((qid, answer_confidence(a), answer_matches(a, gold[qid])))
+        th = thresholds_for_target(records, target, min_n)
+        kept = [ok for qid, conf, ok in records if conf >= th.get(qid, 1.01)]
+        self.report["thresholds"] = th
+        self.report["calibration"] = {
+            "target": target,
+            "records": len(records),
+            "kept": len(kept) / len(records) if records else 0.0,
+            "agreement_kept": sum(kept) / len(kept) if kept else None
+        }
+        return th
+
 
 def loss_and_grads(p: dict, xs: np.ndarray, xo: np.ndarray, pos: np.ndarray, scale: float) -> tuple[float, dict]:
     """Mean cross-entropy of a batch and its gradients with respect to us, vs, uo, vo (float64 in, float64 out)."""
@@ -283,3 +307,39 @@ def fit_head_grouped(states, options, candidates, targets, rank: int = 64, epoch
               "val_examples": int(len(val)),
               "scale": float(scale)}
     return Head(best["us"], best["vs"], best["uo"], best["vo"], report)
+
+
+def thresholds_for_target(records, target, min_n=20):
+    """Per-question confidence thresholds from held-out records (question id, confidence, correct): for every
+    question, the lowest confidence such that the answers at or above it are correct at least `target` of the time.
+    A question with fewer than `min_n` records, or that never reaches the target, gets 1.01 (always ask the LLM)."""
+    by_q = {}
+    for qid, conf, ok in records:
+        by_q.setdefault(qid, []).append((float(conf), bool(ok)))
+    out = {}
+    for qid, recs in by_q.items():
+        if len(recs) < min_n:
+            out[qid] = 1.01
+            continue
+        recs.sort(key=lambda r: -r[0])
+        best = 1.01
+        hits = 0
+        for i, (conf, ok) in enumerate(recs):
+            hits += ok
+            if hits / (i + 1) >= target:
+                best = conf
+        out[qid] = best
+        kept = [ok for c, ok in recs if c >= best]
+        if best <= 1.0 and kept and sum(kept) / len(kept) < target:
+            out[qid] = 1.01
+    return out
+
+
+def answer_matches(answer, gold):
+    """True if a decidekv answer agrees with a reference: a key (choice: the chosen key; score: the most probable
+    level) or, for a yes/no question, a boolean."""
+    if answer.type == "noul":
+        return (answer.noul >= 0.5) == bool(gold)
+    if answer.type == "score":
+        return max(answer.probabilities, key=answer.probabilities.get) == str(gold)
+    return answer.choice == str(gold)

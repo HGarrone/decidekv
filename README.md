@@ -65,7 +65,7 @@ Measured on three datasets (see the results): the right shortcut depends on what
 
 | Kind of state | Recommended | Why |
 |---|---|---|
-| **Structured** (records, game states, agent traces, forms) | `kv.decide(...)`: the LLM with the prefix tree, **no cache** | similar-looking structured states often need different answers: the semantic cache and the catalogue lose accuracy, and the prefix tree already gives the speed |
+| **Structured** (records, game states, agent traces, forms) | `kv.decide(...)`, **no cache**: the default options-first order for accuracy; `order="state"` (prefix tree) when the state is long and speed matters | similar-looking structured states often need different answers: the semantic cache and the catalogue lose accuracy; the prefix tree gives the speed with long states |
 | **Short natural-language messages** (requests, e-mails, chat) | a **trained catalogue** (`kv.train` / `kv.teach`) for speed; or the LLM with `cache=0.95` to keep exactly its answers | many messages look alike: the catalogue answers in the time of one embedding, the cache reuses the LLM's answers for near-duplicates |
 
 ### One list of options, many states
@@ -84,8 +84,10 @@ answer.choice        # 'book_hotel'
 answer.confidence    # probability of the decoded answer
 ```
 
+By default the answer is decoded by name, so `answer.probabilities` holds only the chosen option.
 `tools.choose(state, full=True)` returns the probability of every option in `answer.probabilities` instead of
-the decoded one only (also `kv.decide(..., full=True)` and `tools.scores(state)` for the raw log-probabilities).
+the decoded one only (also `kv.decide(..., full=True)` and `tools.scores(state)` for the raw log-probabilities);
+`labels=True` (one-token labels) gives every probability at no extra cost when the options fit the labels.
 Options whose probability falls below 10⁻⁶ are bounded instead of computed. On Qwen3-8B with the 77 intents of
 Banking77 this costs 50 ms per decision, the same as the greedy choice; on the hybrid 27B about 2.3 s, because
 llama.cpp can evaluate few sequences at once on models with recurrent layers.
@@ -113,9 +115,18 @@ r = kv.decide(
 r.answers["intent"].choice, r.answers["mood"].score, r.answers["escalate"].noul
 ```
 
-When several questions with short option lists are asked about a long state, `decide` puts the state first in the
-prompt and keeps it in the cache for all of them, so the state is computed once per turn instead of once per
-question (`order="auto"`, the default; `order="options"` or `"state"` force one order).
+By default (`order="options"`, since 1.1.0) every option list stays first in the prompt and resident in the cache,
+and each question reads the state after its own list. This was the most accurate order in most of our tests, but
+the time grows with the length of the state, because each question computes the state again. With long states
+`order="state"` puts the state first and keeps it in the cache for all the questions, so it is computed once per
+turn (one prefix-tree pass: much faster, sometimes less accurate); `order="auto"` (the default before 1.1.0) does
+this for the questions with short option lists. Measure both on your own states: in our tests the options-first
+order was more accurate for `Score` questions whose levels are described in words and in an application with a
+27B model (58 against 53 correct out of 61), the state-first order on Typed Decisions with Qwen3-8B.
+
+`r.question_ms` gives the time of every question (an estimate for the questions answered together in one pass).
+`kv.warmup(questions)` (optionally with `head=...`) prepares the indexes, the resident prefixes and the encoder at
+start-up, so that the first real call is not slower than the others.
 
 ### Semantic cache (short natural-language messages)
 
@@ -193,6 +204,18 @@ a confidence threshold go to the LLM, in one call (`r.escalated` lists them):
 
 ```python
 r = kv.decide(state, questions, head=head, threshold=0.5)
+```
+
+The questions passed to the LLM are asked in `escalate_order` (default `"options"`, the more accurate order). One
+threshold for every question is a blunt tool: `head.calibrate(kv, held_out, target=0.95)` finds, for every
+question, the lowest confidence at which the catalogue agrees with the reference at least 95% of the time on
+held-out examples (`held_out` is a list of `(state, questions, reference answers)`); the thresholds are saved with
+the head, and `threshold="calibrated"` uses them (a question without enough examples always goes to the LLM):
+
+```python
+head.calibrate(kv, held_out, target=0.95)
+head.save("head.npz")
+r = kv.decide(state, questions, head=head, threshold="calibrated")
 ```
 
 ### Any embedding model

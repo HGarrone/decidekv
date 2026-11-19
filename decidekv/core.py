@@ -393,15 +393,32 @@ class KV:
             if self.embed is None:
                 raise ValueError(f"more than {self.flat_max} options need an embedding model: "
                                  'KV(model, embed="qwen3-embedding:4b")')
+            from .catalog import CachedEncoder
             if callable(self.embed):
-                self._encoder = self.embed
+                encoder = self.embed
             elif self.backend == "llamacpp":
                 from .llamacpp import LlamaCppEncoder
-                self._encoder = LlamaCppEncoder(self.embed)
+                encoder = LlamaCppEncoder(self.embed)
             else:
                 from .catalog import OllamaEncoder
-                self._encoder = OllamaEncoder(self.embed, self.client.host)
+                encoder = OllamaEncoder(self.embed, self.client.host)
+            # vectors already computed are reused (the same state or option text is never encoded twice)
+            self._encoder = CachedEncoder(encoder)
         return self._encoder
+
+    def warmup(self, questions, head=None):
+        """Prepare everything the first `decide` call would otherwise prepare: the index and the resident prefix of
+        every question (`questions` is a dict {qid: question}), and, with a trained `head` or an embedding model, the
+        encoder and the vectors of the options. Returns the time taken in ms."""
+        t0 = time.perf_counter()
+        for q in questions.values():
+            _, idx, instructions = self.question_index(q, warm=False)
+            idx.warm(instructions)
+        if head is not None:
+            self._decide_catalog("warm-up", questions, head)
+        elif self.embed is not None:
+            self.encoder(["warm-up"])
+        return round((time.perf_counter() - t0) * 1000, 2)
 
     def train(self, options: Any, examples: Any, question: str | None = None, out: str | None = None,
               **fit_kw) -> Any:
@@ -478,8 +495,9 @@ class KV:
         return idx.choose(state, instructions)
 
     def decide(self, state: Any, questions: dict[str, Any] | Any = None, temperature: float = 1.0,
-               labels: bool = False, full: bool = False, head: Any = None, order: str = "auto",
-               threshold: float | None = None, cache: float | None = None) -> Response:
+               labels: bool = False, full: bool = False, head: Any = None, order: str = "options",
+               threshold: float | str | None = None, cache: float | None = None,
+               escalate_order: str = "options") -> Response:
         """OpenJev / Jev-style: several typed questions about one state.
 
         `questions` maps ids to `Choice`, `Score` or `Noul` (these classes, OpenJev's, or plain dicts with a
@@ -490,14 +508,20 @@ class KV:
         catalogue alone: one embedding call per state, no LLM call.
         `threshold` with a head makes a cascade: the catalogue answers every question, and the questions whose
         answer has a confidence below `threshold` (1 - normalised entropy, as in OpenJev) are asked to the LLM in
-        one call; `Response.escalated` lists them.
+        one call, in the order given by `escalate_order` (default "options"); `Response.escalated` lists them.
+        `threshold="calibrated"` uses one threshold per question, found by `Head.calibrate` on held-out data
+        (questions without a threshold always go to the LLM).
         `cache` (a cosine threshold such as 0.95) reuses, question by question, the answer given to a very
         similar state; `Response.cached` lists them. For short natural-language messages, not for structured
         states; it needs an embedding model.
-        `order`: "options" keeps every option list first in the prompt (cached across states); "state" puts the
-        state first, shared by all the questions of the call; "auto" (default) puts the state first for the
-        questions with a short option list (at most 2,000 characters, or shorter than the state), when there
-        are at least two of them, and keeps long lists first (cached across states)."""
+        `order`: "options" (default) keeps every option list first in the prompt (cached across states): the most
+        accurate in our tests, but each question reads the state again, so the time grows with the length of the
+        state; "state" puts the state first, shared by all the questions of the call (one prefix-tree pass: the
+        fastest with long states, sometimes less accurate); "auto" puts the state first for the questions with a
+        short option list (at most 2,000 characters, or shorter than the state), when there are at least two of
+        them, and keeps long lists first.
+        `Response.question_ms` gives the time of every question; for questions answered together in one pass it is
+        an estimate (the time of the pass shared in proportion to the tokens computed for each question)."""
         if questions is None and hasattr(state, "questions"):
             state, questions = state.state, state.questions
         if head is not None:
@@ -507,14 +531,21 @@ class KV:
             cat = self._decide_catalog(state, questions, head)
             if threshold is None:
                 return cat
-            low = [qid for qid, a in cat.answers.items() if answer_confidence(a) < threshold]
+            if threshold == "calibrated":
+                per_q = head.report.get("thresholds")
+                if not per_q:
+                    raise ValueError('threshold="calibrated" needs a head calibrated with Head.calibrate')
+                low = [qid for qid, a in cat.answers.items() if answer_confidence(a) < per_q.get(qid, 1.01)]
+            else:
+                low = [qid for qid, a in cat.answers.items() if answer_confidence(a) < threshold]
             if not low:
                 return cat
             llm = self.decide(state, {qid: questions[qid] for qid in low}, temperature=temperature, labels=labels,
-                              full=full, order=order)
+                              full=full, order=escalate_order)
             answers = {qid: llm.answers.get(qid, a) for qid, a in cat.answers.items()}
             return Response(model=f"decidekv/{self.model}/cascade", answers=answers, usage=llm.usage,
-                            latency_ms=round(cat.latency_ms + llm.latency_ms, 2), escalated=low)
+                            latency_ms=round(cat.latency_ms + llm.latency_ms, 2), escalated=low,
+                            question_ms=llm.question_ms)
         if cache is not None:
             t_start = time.perf_counter()
             from .catalog import QUERY_TEMPLATE, SemanticCache
@@ -540,7 +571,7 @@ class KV:
                             latency_ms=round((time.perf_counter() - t_start) * 1000, 2),
                             cached=list(reused))
         t0 = time.perf_counter()
-        usage, answers = Usage(), {}
+        usage, answers, question_ms = Usage(), {}, {}
         items = [(qid,) + tuple(self.question_index(q, labels=labels, warm=False)) for qid, q in questions.items()]
         if order not in ("auto", "options", "state"):
             raise ValueError(f"unknown order {order!r}")
@@ -565,15 +596,20 @@ class KV:
             batch = [(qid, idx, ins) for qid, q, idx, ins in items
                      if qid in shared and idx.labels and not (full and q.type == "choice")]
             if len(batch) >= 2 and hasattr(self.client, "label_logprobs_tree"):
+                t_tree = time.perf_counter()
                 reqs = [idx.label_request(state, ins, idx.keys, "shared-state") for _, idx, ins in batch]
                 results = self.client.label_logprobs_tree(reqs)
-                for (qid, idx, _), (_, lab), (lps, st) in zip(batch, reqs, results):
+                tree_ms = (time.perf_counter() - t_tree) * 1000
+                computed = [max(1, st.get("input_tokens", 0)) for _, st in results]
+                for (qid, idx, _), (_, lab), (lps, st), n_tok in zip(batch, reqs, results, computed):
                     Index._account(st, usage)
                     pre[qid] = idx.label_answer(lps, lab)
+                    question_ms[qid] = round(tree_ms * n_tok / sum(computed), 2)
             for qid, q, idx, instructions in items:
                 if qid in pre:
                     a = pre[qid]
                 else:
+                    t_q = time.perf_counter()
                     a = idx.choose(
                         state,
                         instructions,
@@ -581,6 +617,7 @@ class KV:
                         full=full and q.type == "choice",
                         order="shared-state" if qid in shared else "options-first"
                     )
+                    question_ms[qid] = round((time.perf_counter() - t_q) * 1000, 2)
                 if q.type == "choice":
                     if temperature != 1.0 and a.probabilities:
                         a = _retemper(a, temperature)
@@ -603,7 +640,8 @@ class KV:
             model=f"decidekv/{self.model}",
             answers=answers,
             usage=usage,
-            latency_ms=round((time.perf_counter() - t0) * 1000, 2)
+            latency_ms=round((time.perf_counter() - t0) * 1000, 2),
+            question_ms=question_ms
         )
 
     def train_questions(self, examples: Any, out: str | None = None, layout: str = "per-question",

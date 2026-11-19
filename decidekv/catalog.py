@@ -153,3 +153,29 @@ class TopKIndex:
 
     def __repr__(self):
         return f"TopKIndex(n={self.n}, k={self.k})"
+
+
+class CachedEncoder:
+    """Wraps an encoder (a callable: list of texts -> array, one row each) with a cache of the vectors already
+    computed: the texts not seen yet are encoded together in one call, the others are reused. At most `max_items`
+    vectors are kept (the oldest are dropped first)."""
+
+    def __init__(self, encoder, max_items=4096):
+        self.encoder = encoder
+        self.max_items = max_items
+        self.vectors = {}
+
+    def __call__(self, texts):
+        texts = list(texts)
+        missing = [t for t in dict.fromkeys(texts) if t not in self.vectors]
+        if missing:
+            new = np.asarray(self.encoder(missing))
+            for t, v in zip(missing, new):
+                self.vectors[t] = v
+        while len(self.vectors) > self.max_items:
+            del self.vectors[next(iter(self.vectors))]
+        return np.stack([self.vectors[t] if t in self.vectors else np.asarray(self.encoder([t]))[0] for t in texts])
+
+    def close(self):
+        if hasattr(self.encoder, "close"):
+            self.encoder.close()

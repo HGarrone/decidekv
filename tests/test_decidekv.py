@@ -421,19 +421,27 @@ def test_decide_state_order_shares_the_state():
 def test_decide_auto_order():
     kv = make_kv()
     two = {"a": Noul(instructions="Is the light red?"), "b": Noul(instructions="Is it raining?")}
-    kv.decide("A long street at night. " * 20, two)
+    kv.decide("A long street at night. " * 20, two, order="auto")
     assert [c[0] for c in shared_calls(kv)] == ["hold", "release"]
     kv.client.calls.clear()
-    kv.decide("A long street at night. " * 20, {"a": two["a"]})
+    kv.decide("A long street at night. " * 20, {"a": two["a"]}, order="auto")
     assert shared_calls(kv) == []
-    kv.decide("Night.", two)
+    kv.decide("Night.", two, order="auto")
     assert [c[0] for c in shared_calls(kv)] == ["hold", "release"]
     kv.client.calls.clear()
     words = [f"word{i:04d}" for i in range(400)]
     big = {"a": Choice(instructions="Which word?", options=words), "b": Choice(instructions="Which other word?",
                                                                                options=words)}
-    kv.decide("Night.", big)
+    kv.decide("Night.", big, order="auto")
     assert shared_calls(kv) == []
+
+
+def test_decide_default_order_is_options():
+    kv = make_kv()
+    two = {"a": Noul(instructions="Is the light red?"), "b": Noul(instructions="Is it raining?")}
+    r = kv.decide("Night.", two)
+    assert shared_calls(kv) == []
+    assert set(r.question_ms) == {"a", "b"} and all(v >= 0 for v in r.question_ms.values())
 
 
 def test_decide_unknown_order():
@@ -665,3 +673,61 @@ def test_semantic_cache_in_decide():
     assert sorted(r2.cached) == ["a", "b"]
     assert len(kv.client.prompts) == n
     assert r2.answers == r1.answers
+
+
+def test_cached_encoder_reuses_vectors():
+    from decidekv.catalog import CachedEncoder
+    calls = []
+
+    def enc(texts):
+        calls.append(list(texts))
+        return np.array([[len(t), 1.0] for t in texts])
+    c = CachedEncoder(enc, max_items=3)
+    assert c(["a", "bb", "a"]).shape == (3, 2) and calls == [["a", "bb"]]
+    c(["a", "ccc"])
+    assert calls[-1] == ["ccc"]
+    c(["dddd"])
+    assert len(c.vectors) == 3
+
+
+def test_thresholds_and_answer_matches():
+    from decidekv.primitives import ChoiceAnswer, NoulAnswer, ScoreAnswer
+    from decidekv.train import answer_matches, thresholds_for_target
+    rec = [("q", 0.9, True)] * 18 + [("q", 0.2, False)] * 4 + [("r", 0.9, True)] * 5
+    th = thresholds_for_target(rec, 0.95)
+    assert abs(th["q"] - 0.9) < 1e-9 and th["r"] == 1.01
+    assert answer_matches(ChoiceAnswer("x", {"x": 1.0}, 1.0), "x")
+    assert answer_matches(ScoreAnswer(score=1.0, probabilities={"0": 0.2, "1": 0.8}, confidence=0.5, legend={}), 1)
+    assert answer_matches(NoulAnswer(noul=0.7), True) and not answer_matches(NoulAnswer(noul=0.7), False)
+
+
+def test_calibrated_cascade_and_escalate_order():
+    choice, score, noul, examples = typed_examples()
+    kv = make_kv(embed=FakeEncoder())
+    head = kv.train_questions(examples, epochs=60, batch=32, lr=0.01)
+    qs = {"c": choice, "s": score, "n": noul}
+    with pytest.raises(ValueError):
+        kv.decide("wwww", qs, head=head, threshold="calibrated")
+    held = []
+    for i in range(40):
+        s = "wxyz"[i % 4] * (3 + i % 3) + "mnop"[(i // 4) % 4]
+        held.append((s, qs, {"c": ["aaaa", "bbbb", "cccc", "dddd"][i % 4], "s": "0" if i % 4 < 2 else "2",
+                             "n": i % 4 in (0, 3)}))
+    th = head.calibrate(kv, held, target=0.9, min_n=5)
+    assert set(th) == {"c", "s", "n"} and "calibration" in head.report
+    r = kv.decide("wwww", qs, head=head, threshold="calibrated")
+    assert set(r.answers) == {"c", "s", "n"}
+    kv.client.calls.clear()
+    r = kv.decide("wwww", qs, head=head, threshold=1.01, escalate_order="state")
+    assert sorted(r.escalated) == ["c", "n", "s"] and [c[0] for c in shared_calls(kv)] == ["hold", "release"]
+    kv.client.calls.clear()
+    kv.decide("wwww", qs, head=head, threshold=1.01)
+    assert shared_calls(kv) == []
+
+
+def test_warmup():
+    choice, score, noul, examples = typed_examples()
+    kv = make_kv(embed=FakeEncoder())
+    head = kv.train_questions(examples, epochs=10, batch=32, lr=0.01)
+    ms = kv.warmup({"c": choice, "s": score, "n": noul}, head=head)
+    assert isinstance(ms, float) and ms >= 0
