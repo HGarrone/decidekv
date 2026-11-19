@@ -5,8 +5,10 @@ import warnings
 
 import numpy as np
 
-sys.path.insert(0, r"E:\AI\PAI_1shot_opt")
-sys.path.insert(0, r"E:\AI\PAI_1shot_opt\benchmarks")
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(HERE)))
+sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.dirname(HERE))
 from decidekv import KV  # noqa: E402
 from data import to_text, typed_decisions  # noqa: E402
 from verify_resident import QS  # noqa: E402
