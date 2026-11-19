@@ -211,9 +211,11 @@ questions is evaluated once on a copy of the state; then every question---or, fo
 and its question---is evaluated in its own sequence copied from its parent, all in one \texttt{llama\_decode}, keeping
 the logits of the last token of each sequence. On hybrid models the number of parallel sequences is bounded by the
 eight-sequence limit, so the questions run in groups, and the least recently used resident lists are freed when
-the tree needs the sequences. The order is chosen automatically: questions with a short option
-block (at most 2{,}000 characters, or shorter than the state) share the state when there are at least two of them;
-long lists stay options-first and resident across states.
+the tree needs the sequences. The order is a parameter. With \texttt{order="auto"}, questions with a short option
+block (at most 2{,}000 characters, or shorter than the state) share the state when there are at least two of them,
+and long lists stay options-first and resident across states; \texttt{order="state"} puts every question after the
+state. Since version 1.1 the default is options first for every question: which order is more accurate depends on the
+task (Section~\ref{sec:order}), so the faster state-first order is an explicit choice of the user.
 
 \begin{figure}[t]
 \centering
@@ -288,6 +290,10 @@ answer with probabilities $p = (p_1, \dots, p_{|C|})$ over its $|C|$ options is
 where $H(p)$ is the entropy of the answer distribution and $\log|C|$ its maximum value (all options equally likely):
 the confidence is 1 when all the probability is on one option and 0 when it is spread evenly (the definition used by
 OpenJev). For example, $p=(0.02, 0.15, 0.83)$ over three levels gives a confidence of 0.53.
+Instead of one threshold for all the questions, version 1.1 can calibrate one per question on held-out examples
+(\texttt{Head.calibrate}): for every question, the lowest confidence at which the catalogue's answers agree with the
+reference at least a target fraction of the time (95\% by default); a question that never reaches the target always
+goes to the LLM.
 
 \subsection{Engines}
 The default engine runs llama.cpp in the Python process on the GGUF files downloaded by Ollama. A
@@ -422,7 +428,7 @@ Options & \dkv & OpenJev arch. & CLM-8B & CLM-8B fine-tuned \\
 \end{tabular}
 \end{table}
 
-\subsection{Resident prefixes and the prefix tree}
+\subsection{Resident prefixes and the prefix tree}\label{sec:order}
 On 100 Banking77 messages a resident list costs 64\ms{} per decision on Qwen3-8B against 155\ms{} when the prompt is
 recomputed, and 157\ms{} against 538\ms{} on the 27B hybrid. Table~\ref{tab:order} shows the effect of the prompt order
 on Typed Decisions: answering the five questions of a case in one call with the state first is faster than one
@@ -430,7 +436,12 @@ question per call with the options first on both models, more accurate on Qwen3-
 uncertainty) and as accurate within the uncertainty on the 27B (+0.8 points). Table~\ref{tab:turn} shows a turn of 15
 questions: the prefix tree makes the state-first order faster even with a very short state, and 7.7 times faster with
 a long state on Qwen3-8B (7.8 times on the 27B). Questions answered by option name are decoded token by token and stay
-outside the batch.
+outside the batch. The accuracy advantage of the state first is not general: in an application with the 27B model
+(61 messages, 15 questions each, a small sample) options first was more accurate than the automatic order (58 against
+53 messages judged right), and in our action-forecasting experiments \texttt{Score} questions with levels in words
+agreed with the true sign of 30 probe effects in 70\% of the cases with the options first and in 40\% with the state
+first. For this reason version 1.1 makes options first the default and
+leaves the state-first order, much faster with long states, as an explicit choice.
 
 \begin{table}[t]
 \centering\small
