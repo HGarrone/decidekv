@@ -11,7 +11,7 @@
   326 vs 2,760 ms on Qwen3-8B, 1,527 vs 11,314 ms on the 27B (prefix tree: 339 and 1,628 ms).
 - Two other variants were measured and left out: every question with its options first and only "answer to question
   k" after the state (the fastest, but −6.0 ± 2.2 points on Qwen3-8B), and the same with the question repeated after
-  the state (−3.0 ± 2.2). See the paper, section "Prompt order and task".
+  the state (−3.0 ± 2.2). See the paper, negative results.
 - `Index.option_lines()`: the option lines of an index without the heading (used by `options_block`).
 
 ## 1.2.0 (2026-11-20)

@@ -212,11 +212,10 @@ questions is evaluated once on a copy of the state; then every question---or, fo
 and its question---is evaluated in its own sequence copied from its parent, all in one \texttt{llama\_decode}, keeping
 the logits of the last token of each sequence. On hybrid models the number of parallel sequences is bounded by the
 eight-sequence limit, so the questions run in groups, and the least recently used resident lists are freed when
-the tree needs the sequences. The order is a parameter. With \texttt{order="auto"}, questions with a short option
-block (at most 2{,}000 characters, or shorter than the state) share the state when there are at least two of them,
-and long lists stay options-first and resident across states; \texttt{order="state"} puts every question after the
-state. Since version 1.1 the default is options first for every question: which order is more accurate depends on the
-task (Section~\ref{sec:order}), so the faster state-first order is an explicit choice of the user.
+the tree needs the sequences. The order is a parameter: \texttt{order="state"} uses this tree for every question;
+the default (since version 1.1) is options first, each list resident; \texttt{order="lists"} (version 1.3) puts the
+distinct option lists of the call first, in one resident prefix, then the state once, then each question with the name
+of its list, through the same tree. Which order is more accurate depends on the task (Section~\ref{sec:order}).
 
 \begin{figure}[t]
 \centering
@@ -283,18 +282,10 @@ catalogue. A head trained on every option never falls back.
 
 \subsection{Confidence cascade}\label{sec:cascade}
 With a trained head and a threshold $T \in [0, 1]$, the catalogue answers every question, and the questions whose
-answer has a confidence below $T$ are asked to the LLM in one call (through the prefix tree). The confidence of an
-answer with probabilities $p = (p_1, \dots, p_{|C|})$ over its $|C|$ options is
-\begin{equation}
-\mathrm{conf}(p) = 1 - \frac{H(p)}{\log |C|}, \qquad H(p) = -\sum_{i=1}^{|C|} p_i \log p_i ,
-\end{equation}
-where $H(p)$ is the entropy of the answer distribution and $\log|C|$ its maximum value (all options equally likely):
-the confidence is 1 when all the probability is on one option and 0 when it is spread evenly (the definition used by
-OpenJev). For example, $p=(0.02, 0.15, 0.83)$ over three levels gives a confidence of 0.53.
-Instead of one threshold for all the questions, version 1.1 can calibrate one per question on held-out examples
-(\texttt{Head.calibrate}): for every question, the lowest confidence at which the catalogue's answers agree with the
-reference at least a target fraction of the time (95\% by default); a question that never reaches the target always
-goes to the LLM.
+answer has a confidence below $T$ are asked to the LLM in one call. The confidence of an answer with probabilities
+$p$ over its $|C|$ options is $1 - H(p)/\log|C|$, with $H$ the entropy: 1 when all the probability is on one option, 0
+when it is spread evenly (the definition used by OpenJev). Version 1.1 can also calibrate one threshold per question on
+held-out examples: the lowest confidence at which the catalogue agrees with the reference at least 95\% of the time.
 
 \subsection{Engines}
 The default engine runs llama.cpp in the Python process on the GGUF files downloaded by Ollama. A
@@ -429,85 +420,29 @@ Options & \dkv & OpenJev arch. & CLM-8B & CLM-8B fine-tuned \\
 \end{tabular}
 \end{table}
 
-\subsection{Resident prefixes and the prefix tree}\label{sec:order}
+\subsection{Resident prefixes and prompt order}\label{sec:order}
 On 100 Banking77 messages a resident list costs 64\ms{} per decision on Qwen3-8B against 155\ms{} when the prompt is
-recomputed, and 157\ms{} against 538\ms{} on the 27B hybrid. Table~\ref{tab:order} shows the effect of the prompt order
-on Typed Decisions: answering the five questions of a case in one call with the state first is faster than one
-question per call with the options first on both models, more accurate on Qwen3-8B (+5.7 points, beyond the
-uncertainty) and as accurate within the uncertainty on the 27B (+0.8 points). Table~\ref{tab:turn} shows a turn of 15
-questions: the prefix tree makes the state-first order faster even with a very short state, and 7.7 times faster with
-a long state on Qwen3-8B (7.8 times on the 27B). Questions answered by option name are decoded token by token and stay
-outside the batch. The accuracy advantage of the state first is not general: in an application with the 27B model
-(61 messages, 15 questions each, a small sample) options first was more accurate than the automatic order (58 against
-53 messages judged right), and in our action-forecasting experiments \texttt{Score} questions with levels in words
-agreed with the true sign of 30 probe effects in 70\% of the cases with the options first and in 40\% with the state
-first. For this reason version 1.1 makes options first the default and
-leaves the state-first order, much faster with long states, as an explicit choice. Since version 1.2 the
-options-first questions answered by labels run together: each in its own sequence copied from its own resident list,
-all in one \texttt{llama\_decode} (``options first, parallel'' in Table~\ref{tab:turn}, measured in one session with
-options first one at a time: 338 and 2{,}571\ms{} on Qwen3-8B, 1{,}266 and 11{,}741\ms{} on the 27B). It halves the
-time with a short state on Qwen3-8B and saves a quarter on the 27B; with a long state it saves nothing, because every
-question still computes the state after its own list. On Typed Decisions (2{,}000 decisions, Qwen3-8B, all the
-questions of a case in one call) the accuracy is the same, 51.1\% with both, and 23 decisions are right only one
-way, 23 only the other.
+recomputed, and 157\ms{} against 538\ms{} on the 27B hybrid. When several questions are asked about one state, the
+order of the prompt matters for both time and accuracy. Options first recomputes the state for every question: with a
+long state (3{,}177 characters) a turn of 15 questions takes 2.8\,s on Qwen3-8B and 11.3\,s on the 27B. The prefix tree
+computes the state once and is 8 and 7 times faster, but it was not always as accurate: in an application with the 27B
+model options first judged 58 of 61 messages right against 53, and on 30 action effects \texttt{Score} questions with
+levels in words agreed with the true sign in 70\% of the cases against 40\%. Version 1.1 therefore made options first
+the default. Version 1.2 runs its questions in parallel, each copied from its own resident list; this halves a turn
+with a short state on Qwen3-8B (338 to 185\ms) but saves nothing with a long one, since every question still computes
+the state.
 
-\begin{table}[t]
-\centering\small
-\caption{Prompt order on Typed Decisions (2{,}000 decisions). Bold: the best accuracy and the lowest time of each column.}\label{tab:order}
-\begin{tabular}{lll}
-\toprule
-& Qwen3-8B & Qwen3.8-27B \\
-\midrule
-Options first, one question per call & 51.0\% $\cdot$ 62\ms & 69.6\% $\cdot$ 249\ms \\
-State first, five questions per call (prefix tree) & 56.7\% $\cdot$ \textbf{41\ms} & \textbf{70.4\%} $\cdot$ \textbf{193\ms} \\
-OpenJev architecture & \textbf{59.3\%} $\cdot$ 67\ms & 69.1\% $\cdot$ 307\ms \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\begin{table}[t]
-\centering\small
-\caption{One turn of 15 questions (4 \texttt{Score}, 11 \texttt{Noul}) about one state; every turn has a new state.}\label{tab:turn}
-\begin{tabular}{lrr}
-\toprule
-& Short state (99 chars) & Long state (3{,}177 chars) \\
-\midrule
-Qwen3-8B, options first & 337\ms & 2{,}615\ms \\
-Qwen3-8B, options first, parallel (v1.2) & 185\ms & 2{,}737\ms \\
-Qwen3-8B, prefix tree & \textbf{174\ms} & \textbf{338\ms} \\
-Qwen3.8-27B, options first & 1{,}198\ms & 11{,}179\ms \\
-Qwen3.8-27B, options first, parallel (v1.2) & 933\ms & 11{,}799\ms \\
-Qwen3.8-27B, prefix tree & \textbf{763\ms} & \textbf{1{,}440\ms} \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\subsection{Prompt order and task}\label{sec:task}
-The options-first order recomputes the state for every question; the state-first order computes it once but was less
-accurate on some tasks. Version 1.3 adds a third order, \texttt{lists}, which computes nothing constant twice: the
-distinct option lists of the call come first (``List A'' with the levels of the \texttt{Score} questions, ``List B''
-with Yes and No) in one resident prefix, then the state once, then each question with the name of its list, all in one
-prefix-tree pass. Table~\ref{tab:task} compares the three orders on every task where we measured them; the rows of
-Typed Decisions and of the turns come from one session per model. On Typed Decisions \texttt{lists} is as accurate as
-options first within the uncertainty on both models (paired differences $-1.1\pm1.5$ and $-0.4\pm1.9$ points) and as
-fast as the prefix tree; with a long state it is 8.5 times faster than options first on Qwen3-8B and 7.4 times on the
-27B. It is better than options first on \texttt{Noul} questions and worse on \texttt{Score} questions (Qwen3-8B: 65.0
-against 63.8\% and 41.5 against 45.5\%; 27B: 81.7 against 76.2\% and 61.4 against 66.4\%).
-
-We tried two other layouts. With every question and its options in the prefix and only ``answer to question $k$''
-after the state, the turn is the fastest (251\ms{} with a long state on Qwen3-8B, 1{,}214\ms{} on the 27B), but the
-model loses track of which question it is answering: $-6.0\pm2.2$ points on Qwen3-8B, where the \texttt{Score}
-questions fall from 45 to 35\%, and $-1.9\pm1.9$ on the 27B. Repeating the question after the state recovers part of
-the loss: $-3.0\pm2.2$ points on Qwen3-8B and $+0.5\pm1.8$ on the 27B (measured in a second session against options
-first in the same session, 51.3\% and 69.4\%; in that session \texttt{lists} gave $-1.5\pm1.6$ and $-1.0\pm1.9$). The
-best of these layouts depends on the model; \texttt{lists} is the one within the uncertainty of options first on both,
-and the only one we ship.
-
-No order is best everywhere, so the README gives Table~\ref{tab:task} as a guide: the prefix tree for a few short
-questions of different kinds about structured records with a small model (Typed Decisions with Qwen3-8B, +5.8 points);
-\texttt{lists} wherever options first was more accurate and the state is long or the questions are many; the default
-when states are short, where the three orders take about the same time. \texttt{lists} has not yet been measured on
-the application and on the action-effect probe, the two tasks where options first won.
+The \texttt{lists} order of version 1.3 computes nothing constant twice: the lists once for all the turns, the state
+once per turn, each question once. Table~\ref{tab:task} compares the three orders on every task where we measured them
+(one session per model for Typed Decisions and the turns). On Typed Decisions \texttt{lists} is as accurate as options
+first within the uncertainty on both models (paired differences $-1.1\pm1.5$ and $-0.4\pm1.9$ points), better on
+\texttt{Noul} questions and 4--5 points worse on \texttt{Score} questions, and as fast as the prefix tree; with a long
+state it is 8.5 times faster than options first on Qwen3-8B and 7.4 times on the 27B. No order is best everywhere, so
+the README gives Table~\ref{tab:task} as a guide: the prefix tree for a few short questions of different kinds about
+structured records with a small model (+5.8 points on Typed Decisions with Qwen3-8B); \texttt{lists} where options first
+was more accurate and the state is long or the questions are many; the default when states are short, where the three
+orders take about the same time. \texttt{lists} has not yet been measured on the application and on the action-effect
+probe. Two other layouts we tried are among the negative results (Section~\ref{sec:negative}).
 
 \begin{table}[t]
 \centering\small
@@ -573,28 +508,11 @@ the head alone. With a head trained on human labels, which is more accurate than
 LLM, every question sent to the LLM lowers the accuracy: a cascade pays when the LLM is the better judge. (The 27B and
 the encoder do not fit together in 12\,GB, so the cascade was run in two phases with the same arithmetic.)
 
-\subsection{Question before the state}
-With the options first, the question can go before the state (one constant prefix: instructions, options, question)
-or after it. Each message was answered in both orders with the same model; Table~\ref{tab:qfirst} counts, for the
-paired McNemar test, the messages answered right in only one of the two. The question before the state is never less
-accurate, is significantly more accurate on CLINC150~\citep{clinc}, and saves about eleven tokens per decision, so it
-is the default when a list is asked its own question; all the results of Tables~\ref{tab:comparison}--\ref{tab:scale}
-with one question per list use it.
-
-\begin{table}[t]
-\centering\small
-\caption{Question after or before the state (Qwen3-8B, options first). Last columns: messages answered right only with
-the question after / only with it before, and the McNemar $p$-value.}\label{tab:qfirst}
-\begin{tabular}{lllcc}
-\toprule
-& After the state & Before the state & Only after / only before & $p$ \\
-\midrule
-Banking77 (3{,}080 messages) & 65.1\% $\cdot$ 66\ms & 65.5\% $\cdot$ \textbf{65\ms} & 72 / 85 & 0.34 \\
-CLINC150 (4{,}500 messages) & 80.0\% $\cdot$ 55\ms & \textbf{81.4\%} $\cdot$ \textbf{54\ms} & 107 / 170 & 0.0002 \\
-Typed Decisions (2{,}000) & 51.0\% $\cdot$ 66\ms & 51.1\% $\cdot$ \textbf{62\ms} & 133 / 136 & 0.90 \\
-\bottomrule
-\end{tabular}
-\end{table}
+\paragraph{Question before the state.} When a list is asked its own question, the question can go before the state
+(one constant prefix: instructions, options, question) or after it. Answered both ways by Qwen3-8B, the question before
+the state was never less accurate and was significantly more accurate on CLINC150~\citep{clinc} (81.4 against 80.0\%
+of 4{,}500 messages, McNemar $p=0.0002$; Banking77 and Typed Decisions within 0.4 points), so it is the default; all
+the results with one question per list use it.
 
 \subsection{Semantic cache and the two modes}
 A semantic cache reuses the LLM's answer for a state whose embedding has a cosine of at least a threshold with a state
@@ -622,18 +540,31 @@ Typed Decisions (8{,}000) & 57.9\% $\cdot$ 42\ms & 56.1\% (16\%) & 53.1\% $\cdot
 \end{tabular}}
 \end{table}
 
-\subsection{Negative results}
+\subsection{Negative results}\label{sec:negative}
+Each idea below is explained, then its result and why we dropped it.
 \begin{itemize}
-\item \textbf{Embedding the state once} per call and putting the question in the cached option texts is 6.4 times
-faster (9\ms{} per decision) but loses 6--8 points of accuracy (67.2\% instead of 75.6\% with human labels); it is
-an option, not the default.
-\item \textbf{Linear heads on the LLM's last hidden state} of the state, one per question, reach 68.9\% in 14\ms{}
-on Qwen3-8B and 66.7\% in 52\ms{} on the 27B: below fine-tuned CLM-8B (whose method this essentially is) and below
-the trained catalogue, so we did not include them.
-\item \textbf{An identity regulariser} on the low-rank correction improved the accuracy on intents without examples
-only from 15\% to 28\% at best.
-\item \textbf{The confidence margin} between the first and the second option could not flag the head's errors on
-intents without examples: those errors are made with high confidence.
+\item \textbf{Embedding the state once.} The trained catalogue embeds the state together with each question, one
+encoder call per question. To save calls we embedded the state alone, once per call, and moved the question into the
+option texts, whose vectors are cached. It is 6.4 times faster (9 against 57\ms{} per decision) but less accurate
+(67.2 against 75.6\% on Typed Decisions): one state vector has to serve every question and cannot stress the part of
+the state each question is about. It remains an option, not the default.
+\item \textbf{Classifiers on the LLM's hidden state.} Instead of decoding an answer, read the LLM's last hidden vector
+for the state once and train one small linear classifier per question on it. It reached 68.9\% in 14\ms{} on
+Qwen3-8B and 66.7\% in 52\ms{} on the 27B, below CLM-8B, which does the same with fine-tuning (71.0\%), and below the
+trained catalogue (75.6\%), which also works with any model. We left it out.
+\item \textbf{Keeping a partly trained head close to the original space.} A head trained on half of the Banking77
+intents gets the other half wrong. A penalty that keeps its correction small should preserve what the untrained
+embeddings knew about those intents. It raised them only from 15 to 28\% at best; the fallback to the LLM
+(Section~\ref{sec:fallback}) reaches 61\%.
+\item \textbf{The margin as an alarm.} We tried to flag the head's doubtful answers by the gap between its first and
+second option and send them to the LLM. The wrong answers on intents without examples had large gaps: the head is
+wrong with confidence. The fallback uses another signal, the disagreement with the untrained catalogue.
+\item \textbf{Two other prompt layouts for many questions.} (a) Every question with its options in the cached prefix,
+then the state, then only ``answer to question $k$'': the fastest turn (251\ms{} with a long state on Qwen3-8B), but
+the model loses track of which question it is answering ($-6.0\pm2.2$ points on Qwen3-8B, $-1.9\pm1.9$ on the 27B).
+(b) The same with the question repeated after the state: $-3.0\pm2.2$ points on Qwen3-8B and $+0.5\pm1.8$ on the 27B.
+Their accuracy depends on the model, while \texttt{lists} stays within the uncertainty of options first on both, so
+only \texttt{lists} is in the library.
 \end{itemize}
 
 \section{Limitations}
@@ -649,52 +580,28 @@ and \texttt{full=True} costs about 2.3\,s on the 27B hybrid.
 \section{Related work}\label{sec:related}
 \textbf{Candidates in the context and cache reuse.} Placing the candidates first so that they are encoded once is the
 corpus-in-context setting of LOFT~\citep{loft}; reusing a precomputed KV cache across queries is cache-augmented
-generation~\citep{cag}. Serving systems share prefixes across requests with paged or radix-tree caches
-(vLLM~\citep{vllm}, SGLang~\citep{sglang}, ChunkAttention~\citep{chunkattention}) and speed up attention over shared
-prefixes (Hydragen~\citep{hydragen}); \dkv{} applies the same principle inside one process to decision workloads, with
-explicit resident sequences that also work on hybrid recurrent models.
-\textbf{Constrained decoding.} Decoding through a trie of candidate names follows GENRE~\citep{genre}; grammar-based
-decoding is common in structured generation~\citep{outlines}.
-\textbf{Typed decisions.} Jev-style systems and OpenJev~\citep{openjev} define the \texttt{Choice}/\texttt{Score}/\texttt{Noul}
-interface that \dkv{} implements. Contrastive Language Models~\citep{clm} train heads on top of an LLM; our trained
-catalogue instead corrects a frozen embedding space and leaves the LLM untouched.
-\textbf{Concurrent work.} SharedKV-BT~\citep{sharedkvbt} encodes the context of a behaviour-tree node once and scores the
-candidates of all its fields in one batch (Hugging Face Transformers, 3--4B models), reporting 2.4--4.2$\times$ speedups
-over constrained decoding. LLM-as-Jev~\citep{llmasjev} answers \texttt{Choice}/\texttt{Score}/\texttt{Noul} by prefill
-alone, sharing prefixes within a request, and studies fine-tuning of the LLM. Both share the idea of scoring several
-questions over a context encoded once, which our prefix tree also uses; neither keeps option lists resident across
-states, switches to an embedding catalogue for large lists, trains a catalogue (from human labels or from the LLM),
-or targets hybrid recurrent models. We found these works after our implementation was written.
-\textbf{Contrastive training.} The catalogue objective is InfoNCE~\citep{infonce,clip} with soft targets, and its
+generation~\citep{cag}. Serving systems share prefixes across requests (vLLM~\citep{vllm}, SGLang~\citep{sglang},
+ChunkAttention~\citep{chunkattention}) and speed up attention over them (Hydragen~\citep{hydragen}); \dkv{} applies
+the principle inside one process to decisions, with resident sequences that also work on hybrid recurrent models.
+\textbf{Constrained decoding} through a trie of candidate names follows GENRE~\citep{genre}; grammars are common in
+structured generation~\citep{outlines}.
+\textbf{Typed decisions.} OpenJev~\citep{openjev} defines the \texttt{Choice}/\texttt{Score}/\texttt{Noul} interface
+that \dkv{} implements. Contrastive Language Models~\citep{clm} train heads on top of an LLM; our catalogue corrects a
+frozen embedding space and leaves the LLM untouched.
+\textbf{Concurrent work.} SharedKV-BT~\citep{sharedkvbt} encodes the context of a behaviour-tree node once and scores
+the candidates of all its fields in one batch (3--4B models, 2.4--4.2$\times$ faster than constrained decoding).
+LLM-as-Jev~\citep{llmasjev} answers \texttt{Choice}/\texttt{Score}/\texttt{Noul} by prefill alone, sharing prefixes
+within a request, and studies fine-tuning. Both score several questions over a context encoded once, as our prefix
+tree does; neither keeps lists resident across states, uses a catalogue for large lists, trains one, or targets hybrid
+models. We found them after our implementation was written.
+\textbf{Contrastive training.} The catalogue objective is InfoNCE~\citep{infonce,clip} with soft targets; its
 low-rank, identity-initialised correction follows LoRA~\citep{lora}.
 
 \section{Future work}
-In our aim game the target does not move, so the state is the current grid and the options are fixed. With moving
-targets---interception in robotics, pedestrians in autonomous driving, demand in logistics, load in energy networks,
-leading shots in games---the decision should be taken on where the target \emph{will be}, not where it is. A natural
-sequel is to put a time-series forecaster in front of \dkv: the forecaster produces the predicted state, and the
-decision is taken on it with the same resident options and prefix tree; temporal patterns may also help to group
-similar states. Predict-then-act designs exist in robotics, where a small world model forecasts future visual tokens
-for a frozen vision-language-action model and enables catching moving objects~\citep{ahead}, and LLM agents are
-increasingly combined with time-series models~\citep{tsagents}; we are not aware of work that pairs a forecaster with
-typed, cache-resident LLM decisions under a latency budget.
-
-\begin{figure}[h]
-\centering
-\begin{tikzpicture}[
-  box/.style={draw, rounded corners=2pt, align=center, font=\footnotesize, inner sep=4pt, minimum height=1.05cm},
-  arr/.style={-{Latex[length=2mm]}, thick, gray!70!black}]
-\node[box, fill=gray!10] (obs) at (0, 0) {observations\\over time\\\scriptsize(positions, load)};
-\node[box, fill=orange!15] (fc) at (3.7, 0) {time-series\\forecaster\\\scriptsize(e.g. a foundation model)};
-\node[box, fill=green!12] (st) at (7.2, 0) {predicted state\\\scriptsize``where the target\\\scriptsize will be at $t+\Delta$''};
-\node[box, fill=blue!10] (dk) at (10.5, 0) {\dkv\\\scriptsize resident options,\\\scriptsize prefix tree};
-\node[box, fill=gray!10] (act) at (13.3, 0) {decision\\\scriptsize(aim, route,\\\scriptsize dispatch)};
-\draw[arr] (obs) -- (fc); \draw[arr] (fc) -- (st); \draw[arr] (st) -- (dk); \draw[arr] (dk) -- (act);
-\end{tikzpicture}
-\caption{The planned sequel: a forecaster turns the recent history into the state the target will have when the
-decision takes effect, and \dkv{} decides on that predicted state with the same resident options and prefix tree.
-$\Delta$ covers the latency of the decision and of its execution.}\label{fig:forecast}
-\end{figure}
+When the target moves (pedestrians, demand, load, the state of a partner), the decision should be taken on the state it
+\emph{will} have. A sequel, to be published separately, puts a forecaster in front of \dkv{} and lets the LLM's
+knowledge guide what is tried first; predict-then-act designs exist in robotics~\citep{ahead}, and LLM agents are
+increasingly combined with time-series models~\citep{tsagents}.
 
 \section{Conclusion}
 \dkv{} is a free tool for a frequent task: fast, constrained, typed decisions with a local LLM. It is ready to use
