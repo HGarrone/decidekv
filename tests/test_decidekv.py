@@ -776,3 +776,23 @@ def test_batch_options_switch_and_single_question():
               order="state")
     assert kv.client.resident_calls == []
     assert kv.client.trees == [2]
+
+
+def test_lists_order_prompt_and_batch():
+    kv = make_kv()
+    qs = [Score(instructions="How loud?", criteria=["quiet", "medium", "loud"]), Noul(instructions="Is it late?"),
+          Noul(instructions="Is it red?")]
+    entries = [tuple(kv.question_index(q, warm=False))[1:] for q in qs]
+    reqs = kv._lists_requests("A street.", entries)
+    assert len(reqs) == 3 and len({segs[:2] for segs, _ in reqs}) == 1
+    first = reqs[0][0][0]
+    assert first.count("### List A") == 1 and first.count("### List B") == 1 and "### List C" not in first
+    assert "list A" in reqs[0][0][2] and "list B" in reqs[1][0][2] and "Is it late?" in reqs[1][0][2]
+    assert set(reqs[1][1]) == {"Yes", "No"}
+    kv.client = TreeClient()
+    qd = {"s": qs[0], "a": qs[1], "b": qs[2], "c": Choice(instructions="Which?", options=["x", "y"])}
+    r = kv.decide("A long street at night, late.", qd, order="lists")
+    assert kv.client.trees == [3]                   # the Choice by name is asked options first
+    assert set(r.answers) == set(qd) and set(r.question_ms) == set(qd)
+    kv.decide("A street.", {"a": qs[1]}, order="lists")
+    assert kv.client.trees == [3]                   # one question alone: no batch

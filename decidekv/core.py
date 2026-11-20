@@ -68,6 +68,10 @@ WORDING = {
     "shared_intro": "You are a decision engine. Questions about the {state} below follow, one at a time.\n\n",
 }
 
+LISTS_INTRO = ("You are a decision engine. Lists of options come first; the {state} and the questions about it "
+               "follow. Answer each question with the label of one option of the list it names (the text before the "
+               "colon), and nothing else.\n\n")
+
 
 class Index:
     """A fixed set of options, pre-filled into the model's KV cache. Create it with `KV.index(...)`.
@@ -126,14 +130,18 @@ class Index:
         return self.wording["intro"].format(task=task, state=self.state_label.lower(), noun=noun, plural=plural,
                                              reply=reply)
 
-    def options_block(self) -> str:
+    def option_lines(self) -> str:
+        """The options, one per line: "label: text" when the index answers by labels, "- text" otherwise."""
         if self.labels:
             own = self.labels == self.keys          # e.g. Score levels "0".."n" or Noul "Yes"/"No"
             body = "\n".join(f"{lab}: {(d or k_) if own else t}"
                              for lab, k_, d, t in zip(self.labels, self.keys, self.descs, self.texts))
         else:
             body = "\n".join(f"- {t}" for t in self.texts)
-        return f"### {self.wording['plural'].format(noun=self.noun).capitalize()}\n{body}\n\n"
+        return body
+
+    def options_block(self) -> str:
+        return f"### {self.wording['plural'].format(noun=self.noun).capitalize()}\n{self.option_lines()}\n\n"
 
     def state_block(self, state: Any) -> str:
         return f"### {self.state_label}\n{render_state(state)}\n\n"
@@ -521,7 +529,11 @@ class KV:
         state; "state" puts the state first, shared by all the questions of the call (one prefix-tree pass: the
         fastest with long states, sometimes less accurate); "auto" puts the state first for the questions with a
         short option list (at most 2,000 characters, or shorter than the state), when there are at least two of
-        them, and keeps long lists first.
+        them, and keeps long lists first; "lists" puts the distinct option lists of the call first (List A, List B,
+        ...), in one prefix that stays cached while the lists do not change, then the state once, then every question
+        with the name of its list, all in parallel: as accurate as "options" in our tests and about as fast as
+        "state" (questions answered by labels: `Score`, `Noul`, `Choice` with `labels=True`; the others are asked
+        options first).
         `Response.question_ms` gives the time of every question; for questions answered together in one pass it is
         an estimate (the time of the pass shared in proportion to the tokens computed for each question)."""
         if questions is None and hasattr(state, "questions"):
@@ -575,7 +587,7 @@ class KV:
         t0 = time.perf_counter()
         usage, answers, question_ms = Usage(), {}, {}
         items = [(qid,) + tuple(self.question_index(q, labels=labels, warm=False)) for qid, q in questions.items()]
-        if order not in ("auto", "options", "state"):
+        if order not in ("auto", "options", "state", "lists"):
             raise ValueError(f"unknown order {order!r}")
         if order == "state":
             shared = {qid for qid, _, _, _ in items}
@@ -585,6 +597,13 @@ class KV:
             shared = short if len(short) >= 2 else set()
         else:
             shared = set()
+        listed = []
+        if order == "lists":
+            listed = [(qid, idx, ins) for qid, q, idx, ins in items
+                      if idx.labels and not (full and q.type == "choice")]
+            if len(listed) < 2:
+                listed = []
+        in_lists = {qid for qid, _, _ in listed}
         pre = {}
         held = None
         if shared:
@@ -593,8 +612,10 @@ class KV:
             self.client.hold(held)
         try:
             for qid, q, idx, instructions in items:
-                if qid not in shared and getattr(idx, "prompt_tokens", 0) is None:
+                if qid not in shared and qid not in in_lists and getattr(idx, "prompt_tokens", 0) is None:
                     idx.warm(instructions)
+            if listed:
+                pre.update(self._decide_lists(state, listed, usage, question_ms))
             batch = [(qid, idx, ins) for qid, q, idx, ins in items
                      if qid in shared and idx.labels and not (full and q.type == "choice")]
             if len(batch) >= 2 and hasattr(self.client, "label_logprobs_tree"):
@@ -662,6 +683,43 @@ class KV:
             latency_ms=round((time.perf_counter() - t0) * 1000, 2),
             question_ms=question_ms
         )
+
+    def _lists_requests(self, state, entries):
+        """(segments, labels) of every question for order="lists". `entries` is a list of (index, instructions) of
+        questions answered by labels. The first segment holds the distinct option lists (List A, List B, ...), the
+        second the state, both the same for every question; the last holds the question and names its list."""
+        label = entries[0][0].state_label
+        state_seg = f"### {label}\n{render_state(state)}\n\n"
+        names = {}
+        parts = [LISTS_INTRO.format(state=label.lower())]
+        for idx, ins in entries:
+            body = idx.option_lines()
+            if body not in names:
+                names[body] = LETTERS[len(names)]
+                parts.append(f"### List {names[body]}\n{body}\n\n")
+        first = "".join(parts)
+        return [((first, state_seg, f"### Question\n{ins or idx.question or ''}\nAnswer with the label of one option "
+                  f"of list {names[idx.option_lines()]}.\n\n### Answer\n"), list(idx.labels))
+                for idx, ins in entries]
+
+    def _decide_lists(self, state, entries, usage, question_ms):
+        """Answer label questions with order="lists". `entries` is a list of (qid, index, instructions); returns
+        {qid: answer} (the answer of `Index.label_answer`), adds the tokens to `usage` and the time of every question
+        to `question_ms` (an estimate: the time of the pass split by the tokens each question computed)."""
+        reqs = self._lists_requests(state, [(idx, ins) for _, idx, ins in entries])
+        t0 = time.perf_counter()
+        if len(reqs) >= 2 and hasattr(self.client, "label_logprobs_tree"):
+            results = self.client.label_logprobs_tree(reqs)
+        else:
+            results = [self.client.label_logprobs(seg, lab) for seg, lab in reqs]
+        ms = (time.perf_counter() - t0) * 1000
+        computed = [max(1, st.get("input_tokens", 0)) for _, st in results]
+        out = {}
+        for (qid, idx, _), (_, lab), (lps, st), n_tok in zip(entries, reqs, results, computed):
+            Index._account(st, usage)
+            out[qid] = idx.label_answer(lps, lab)
+            question_ms[qid] = round(ms * n_tok / sum(computed), 2)
+        return out
 
     def train_questions(self, examples: Any, out: str | None = None, layout: str = "per-question",
                         **fit_kw) -> Any:

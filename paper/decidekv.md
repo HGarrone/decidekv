@@ -337,6 +337,16 @@ On `llama-server` there is no prefix tree: the questions go one by one, and the 
 consecutive prompts in a slot (the 11 `Noul` questions share a slot, state included), which is why its options-first
 order loses less with a long state.
 
+**Since 1.1–1.3.** The default became options first in 1.1, because it was more accurate in an application with the
+27B model (58 against 53 messages right out of 61) and for `Score` questions with levels in words (70% against 40% of
+30 action-effect signs). 1.2 runs the options-first label questions of a call in parallel sequences (short state:
+338 → 185 ms on Qwen3-8B). 1.3 adds `order="lists"`: the distinct option lists first, the state once, each question
+after it with the name of its list, in one prefix-tree pass. On Typed Decisions it is as accurate as options first
+within the uncertainty (Qwen3-8B 50.1% against 51.2%, paired −1.1 ± 1.5; 27B 68.7% against 69.1%, −0.4 ± 1.9) at the
+speed of the prefix tree (198 against 319 ms per case on the 8B; a long-state turn 326 against 2,760 ms). The README
+table "Which order for which task" and section "Prompt order and task" of the paper have every number
+(`benchmarks/together/`).
+
 ### Resident prefix on any architecture
 
 100 Banking77 messages, the same model with the option list resident in the cache and with the whole prompt

@@ -37,7 +37,8 @@ uncertainty it is more accurate on four of the seven task--model pairs we could 
 15\ms{} and 75.6\% on Typed Decisions without any LLM call, above CLM-8B with heads fine-tuned on the same tasks. The
 speed comes from organising the work around the KV cache: option lists stay resident in the cache across states, and
 the questions about one state share it through a prefix tree evaluated in one forward pass (a turn of 15 questions on
-a 27B hybrid model: from 11.2\,s to 1.4\,s with a long state). We report the weaknesses too: where it is less accurate,
+a 27B hybrid model: from 11.2\,s to 1.4\,s with a long state); putting the distinct option lists first, the state
+once and each question after it keeps the accuracy of the options-first order at the speed of the prefix tree. We report the weaknesses too: where it is less accurate,
 how probabilities depend on batching in llama.cpp, and what we tried that did not work. An optional semantic cache
 reuses the LLM's answers for near-duplicate messages, and we outline a sequel in which a time-series forecaster passes
 the predicted state of a moving target to \dkv.
@@ -477,6 +478,56 @@ Qwen3-8B, prefix tree & \textbf{174\ms} & \textbf{338\ms} \\
 Qwen3.8-27B, options first & 1{,}198\ms & 11{,}179\ms \\
 Qwen3.8-27B, options first, parallel (v1.2) & 933\ms & 11{,}799\ms \\
 Qwen3.8-27B, prefix tree & \textbf{763\ms} & \textbf{1{,}440\ms} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Prompt order and task}\label{sec:task}
+The options-first order recomputes the state for every question; the state-first order computes it once but was less
+accurate on some tasks. Version 1.3 adds a third order, \texttt{lists}, which computes nothing constant twice: the
+distinct option lists of the call come first (``List A'' with the levels of the \texttt{Score} questions, ``List B''
+with Yes and No) in one resident prefix, then the state once, then each question with the name of its list, all in one
+prefix-tree pass. Table~\ref{tab:task} compares the three orders on every task where we measured them; the rows of
+Typed Decisions and of the turns come from one session per model. On Typed Decisions \texttt{lists} is as accurate as
+options first within the uncertainty on both models (paired differences $-1.1\pm1.5$ and $-0.4\pm1.9$ points) and as
+fast as the prefix tree; with a long state it is 8.5 times faster than options first on Qwen3-8B and 7.4 times on the
+27B. It is better than options first on \texttt{Noul} questions and worse on \texttt{Score} questions (Qwen3-8B: 65.0
+against 63.8\% and 41.5 against 45.5\%; 27B: 81.7 against 76.2\% and 61.4 against 66.4\%).
+
+We tried two other layouts. With every question and its options in the prefix and only ``answer to question $k$''
+after the state, the turn is the fastest (251\ms{} with a long state on Qwen3-8B, 1{,}214\ms{} on the 27B), but the
+model loses track of which question it is answering: $-6.0\pm2.2$ points on Qwen3-8B, where the \texttt{Score}
+questions fall from 45 to 35\%, and $-1.9\pm1.9$ on the 27B. Repeating the question after the state recovers part of
+the loss: $-3.0\pm2.2$ points on Qwen3-8B and $+0.5\pm1.8$ on the 27B (measured in a second session against options
+first in the same session, 51.3\% and 69.4\%; in that session \texttt{lists} gave $-1.5\pm1.6$ and $-1.0\pm1.9$). The
+best of these layouts depends on the model; \texttt{lists} is the one within the uncertainty of options first on both,
+and the only one we ship.
+
+No order is best everywhere, so the README gives Table~\ref{tab:task} as a guide: the prefix tree for a few short
+questions of different kinds about structured records with a small model (Typed Decisions with Qwen3-8B, +5.8 points);
+\texttt{lists} wherever options first was more accurate and the state is long or the questions are many; the default
+when states are short, where the three orders take about the same time. \texttt{lists} has not yet been measured on
+the application and on the action-effect probe, the two tasks where options first won.
+
+\begin{table}[t]
+\centering\small
+\caption{The three prompt orders by task: accuracy $\cdot$ time, paired difference against options first ($\pm U$,
+$k=2$); 8B: Qwen3-8B, 27B: Qwen3.8-27B. Typed Decisions: 2{,}000 decisions, time per case of five questions.
+Turns: 15 questions, median time per turn.
+Application: 61 messages of 15 questions. Action effects: \texttt{Score} questions with levels in words. --: not
+measured.}\label{tab:task}
+\footnotesize\setlength{\tabcolsep}{3pt}
+\begin{tabular}{llll}
+\toprule
+Task & Options first & \texttt{lists} (v1.3) & State first (tree) \\
+\midrule
+Typed Decisions, 8B & 51.2\% $\cdot$ 319\ms & 50.1\% ($-1.1\pm1.5$) $\cdot$ \textbf{198\ms} & \textbf{57.0\%} ($+5.8\pm2.3$) $\cdot$ 216\ms \\
+Typed Decisions, 27B & 69.1\% $\cdot$ 1{,}753\ms & 68.7\% ($-0.4\pm1.9$) $\cdot$ \textbf{975\ms} & \textbf{70.4\%} ($+1.4\pm1.8$) $\cdot$ 979\ms \\
+Turn, long state, 8B & 2{,}760\ms & \textbf{326\ms} & 339\ms \\
+Turn, long state, 27B & 11{,}314\ms & \textbf{1{,}527\ms} & 1{,}628\ms \\
+Turn, short state, 8B / 27B & 189 / 949\ms & \textbf{164 / 843\ms} & 178 / 934\ms \\
+Application, 27B &\textbf{58} right & -- & 53 right (\texttt{auto}) \\
+Sign of 30 action effects & \textbf{70\%} & -- & 40\% \\
 \bottomrule
 \end{tabular}
 \end{table}

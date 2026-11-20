@@ -65,7 +65,7 @@ Measured on three datasets (see the results): the right shortcut depends on what
 
 | Kind of state | Recommended | Why |
 |---|---|---|
-| **Structured** (records, game states, agent traces, forms) | `kv.decide(...)`, **no cache**: the default options-first order for accuracy; `order="state"` (prefix tree) when the state is long and speed matters | similar-looking structured states often need different answers: the semantic cache and the catalogue lose accuracy; the prefix tree gives the speed with long states |
+| **Structured** (records, game states, agent traces, forms) | `kv.decide(...)`, **no cache**: the default options-first order; `order="lists"` for the same accuracy with long states at the speed of the prefix tree; `order="state"` (prefix tree) where it is more accurate (see "Which order for which task") | similar-looking structured states often need different answers: the semantic cache and the catalogue lose accuracy; the prefix tree gives the speed with long states |
 | **Short natural-language messages** (requests, e-mails, chat) | a **trained catalogue** (`kv.train` / `kv.teach`) for speed; or the LLM with `cache=0.95` to keep exactly its answers | many messages look alike: the catalogue answers in the time of one embedding, the cache reuses the LLM's answers for near-duplicates |
 
 ### One list of options, many states
@@ -129,6 +129,34 @@ call run together in parallel sequences, each copied from its own resident list,
 15 questions about a short state: 338 → 185 ms on Qwen3-8B, 1,266 → 933 ms on the 27B hybrid; with a long state the
 time does not change (each question still computes the state after its own list); the accuracy on Typed Decisions is
 the same (51.1% both, 2,000 decisions). `kv.batch_options = False` answers them one at a time as before.
+
+Since 1.3.0 `order="lists"` puts the distinct option lists of the call first ("List A" with the levels of the
+`Score` questions, "List B" with Yes/No...), in one prefix that stays cached while the lists do not change, then the
+state once, then each question with the name of its list, all in parallel. Nothing constant is computed twice: the
+lists once for all the turns, the state once per turn, each question once. It keeps the accuracy of the options-first
+order at the speed of the prefix tree.
+
+#### Which order for which task
+
+Same engine and data for every order in a row; accuracy · time, paired difference against options first (± U, k = 2).
+
+| Task | `order="options"` (default) | `order="lists"` | `order="state"` (prefix tree) |
+|---|---|---|---|
+| Typed Decisions, Qwen3-8B (2,000 decisions; time per case of 5 questions) | 51.2% · 319 ms | 50.1% (−1.1 ± 1.5) · 198 ms | **57.0%** (+5.8 ± 2.3) · 216 ms |
+| Typed Decisions, Qwen3.8-27B | 69.1% · 1,753 ms | 68.7% (−0.4 ± 1.9) · 975 ms | 70.4% (+1.4 ± 1.8) · 979 ms |
+| Turn of 15 questions, long state (3,177 characters), Qwen3-8B | 2,760 ms | **326 ms** | 339 ms |
+| Turn of 15 questions, long state, Qwen3.8-27B | 11,314 ms | **1,527 ms** | 1,628 ms |
+| Turn of 15 questions, short state (99 characters), Qwen3-8B / 27B | 189 / 949 ms | **164 / 843 ms** | 178 / 934 ms |
+| Application with Qwen3.8-27B (61 messages, 15 questions each) | **58** right | not measured | 53 right (`auto`) |
+| `Score` with levels in words, sign of 30 action effects | **70%** | not measured | 40% |
+
+- **Few short questions of different kinds about structured records, a small model** (Typed Decisions with the 8B):
+  `order="state"`, the most accurate and among the fastest.
+- **Anything where the options-first order was more accurate** (the application, `Score` levels in words), **with
+  long states or many questions**: `order="lists"`, the same accuracy as options first within the uncertainty on
+  Typed Decisions and 7 to 8 times faster with a long state. On Typed Decisions it is better on `Noul` questions and
+  4 to 5 points worse on `Score` questions than options first; check it on your own task before switching.
+- **Short states and few questions**: the three orders take about the same time; keep the default.
 
 `r.question_ms` gives the time of every question (an estimate for the questions answered together in one pass).
 `kv.warmup(questions)` (optionally with `head=...`) prepares the indexes, the resident prefixes and the encoder at
@@ -702,7 +730,7 @@ examples/       quickstart.py
 benchmarks/     baselines.py (comparison), scale.py (growing lists), train_bench.py (training),
                 typed_train_bench.py (training on typed questions), cascade_bench.py (cascade),
                 uncertainty_bench.py (Type A uncertainty),
-                engine_bench.py (engines, turns),
+                engine_bench.py (engines, turns), together/ (prompt orders by task, order="lists"),
                 checks.py (correctness checks to run first), report.py (tables)
 results/        raw results of every benchmark
 paper/          article and figures

@@ -9,6 +9,6 @@ from .core import KV, Index, iter_answers, render_state
 from .ollama import Ollama, OllamaError
 from .primitives import Choice, ChoiceAnswer, Noul, NoulAnswer, Response, Score, ScoreAnswer, Usage
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 __all__ = ["KV", "Index", "Choice", "Score", "Noul", "ChoiceAnswer", "ScoreAnswer", "NoulAnswer",
            "Response", "Usage", "Ollama", "OllamaError", "iter_answers", "render_state", "__version__"]
