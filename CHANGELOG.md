@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.0 (2026-11-20)
+
+- **Options first, in parallel**: in `KV.decide` with `order="options"`, the questions answered by labels (`Score`,
+  `Noul`, `Choice` with `labels=True`) run together in parallel sequences of one llama.cpp pass, each copied from its
+  own resident option list (new backend method `label_logprobs_resident`). One turn of 15 questions about a short
+  state: Qwen3-8B 338 → 185 ms, Qwen3.8-27B 1,266 → 933 ms; with a long state no change (every question still computes
+  the state after its own list). Typed Decisions accuracy unchanged (51.1% both, 2,000 decisions; individual
+  probabilities can differ slightly, as between any two batch layouts in llama.cpp). `kv.batch_options = False`
+  restores the one-at-a-time behaviour.
+
 ## 1.1.0 (2026-11-19)
 
 Changes suggested by use in an application with a 27B model.

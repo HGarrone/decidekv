@@ -731,3 +731,48 @@ def test_warmup():
     head = kv.train_questions(examples, epochs=10, batch=32, lr=0.01)
     ms = kv.warmup({"c": choice, "s": score, "n": noul}, head=head)
     assert isinstance(ms, float) and ms >= 0
+
+
+class ResidentClient(TreeClient):
+    """TreeClient with the options-first batched method: answers every item with label_logprobs and records
+    the batches."""
+
+    def __init__(self):
+        super().__init__()
+        self.resident_calls = []
+
+    def label_logprobs_resident(self, items):
+        self.resident_calls.append(len(items))
+        return [self.label_logprobs(segments, labels) for segments, labels in items]
+
+
+def test_decide_batches_label_questions_options_first():
+    qs = {"n1": Noul(instructions="Is the light red?"), "n2": Noul(instructions="Is it raining?"),
+          "s": Score(instructions="How loud is it?", criteria=["quiet", "loud"])}
+    state = "A long street at night. " * 20
+    r_plain = make_kv().decide(state, qs, order="options")
+    kv = make_kv()
+    kv.client = ResidentClient()
+    r = kv.decide(state, qs, order="options")
+    assert kv.client.resident_calls == [3]
+    assert kv.client.trees == []
+    for qid in qs:
+        assert r.answers[qid] == r_plain.answers[qid]
+    assert r.usage.output_tokens == r_plain.usage.output_tokens
+    assert set(r.question_ms) == set(qs)
+
+
+def test_batch_options_switch_and_single_question():
+    kv = make_kv()
+    kv.client = ResidentClient()
+    kv.batch_options = False
+    kv.decide("A street.", {"a": Noul(instructions="Is it late?"), "b": Noul(instructions="Is it red?")},
+              order="options")
+    assert kv.client.resident_calls == []
+    kv.batch_options = True
+    kv.decide("A street.", {"a": Noul(instructions="Is it late?")}, order="options")
+    assert kv.client.resident_calls == []
+    kv.decide("A street.", {"a": Noul(instructions="Is it late?"), "b": Noul(instructions="Is it red?")},
+              order="state")
+    assert kv.client.resident_calls == []
+    assert kv.client.trees == [2]

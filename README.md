@@ -124,6 +124,12 @@ this for the questions with short option lists. Measure both on your own states:
 order was more accurate for `Score` questions whose levels are described in words and in an application with a
 27B model (58 against 53 correct out of 61), the state-first order on Typed Decisions with Qwen3-8B.
 
+Since 1.2.0 the options-first questions answered by labels (`Score`, `Noul`, `Choice` with `labels=True`) of one
+call run together in parallel sequences, each copied from its own resident list, in one llama.cpp pass. One turn of
+15 questions about a short state: 338 → 185 ms on Qwen3-8B, 1,266 → 933 ms on the 27B hybrid; with a long state the
+time does not change (each question still computes the state after its own list); the accuracy on Typed Decisions is
+the same (51.1% both, 2,000 decisions). `kv.batch_options = False` answers them one at a time as before.
+
 `r.question_ms` gives the time of every question (an estimate for the questions answered together in one pass).
 `kv.warmup(questions)` (optionally with `head=...`) prepares the indexes, the resident prefixes and the encoder at
 start-up, so that the first real call is not slower than the others.

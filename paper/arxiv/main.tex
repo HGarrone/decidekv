@@ -441,7 +441,14 @@ outside the batch. The accuracy advantage of the state first is not general: in 
 53 messages judged right), and in our action-forecasting experiments \texttt{Score} questions with levels in words
 agreed with the true sign of 30 probe effects in 70\% of the cases with the options first and in 40\% with the state
 first. For this reason version 1.1 makes options first the default and
-leaves the state-first order, much faster with long states, as an explicit choice.
+leaves the state-first order, much faster with long states, as an explicit choice. Since version 1.2 the
+options-first questions answered by labels run together: each in its own sequence copied from its own resident list,
+all in one \texttt{llama\_decode} (``options first, parallel'' in Table~\ref{tab:turn}, measured in one session with
+options first one at a time: 338 and 2{,}571\ms{} on Qwen3-8B, 1{,}266 and 11{,}741\ms{} on the 27B). It halves the
+time with a short state on Qwen3-8B and saves a quarter on the 27B; with a long state it saves nothing, because every
+question still computes the state after its own list. On Typed Decisions (2{,}000 decisions, Qwen3-8B, all the
+questions of a case in one call) the accuracy is the same, 51.1\% with both, and 23 decisions are right only one
+way, 23 only the other.
 
 \begin{table}[t]
 \centering\small
@@ -465,8 +472,10 @@ OpenJev architecture & \textbf{59.3\%} $\cdot$ 67\ms & 69.1\% $\cdot$ 307\ms \\
 & Short state (99 chars) & Long state (3{,}177 chars) \\
 \midrule
 Qwen3-8B, options first & 337\ms & 2{,}615\ms \\
+Qwen3-8B, options first, parallel (v1.2) & 185\ms & 2{,}737\ms \\
 Qwen3-8B, prefix tree & \textbf{174\ms} & \textbf{338\ms} \\
 Qwen3.8-27B, options first & 1{,}198\ms & 11{,}179\ms \\
+Qwen3.8-27B, options first, parallel (v1.2) & 933\ms & 11{,}799\ms \\
 Qwen3.8-27B, prefix tree & \textbf{763\ms} & \textbf{1{,}440\ms} \\
 \bottomrule
 \end{tabular}
