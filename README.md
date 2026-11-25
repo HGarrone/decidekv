@@ -4,6 +4,9 @@
 
 **Fast decisions over many options with a local LLM.**
 
+**Status: complete (version 1.4.0).** The library and its paper are finished; fixes only from here on. Decisions that
+use a forecast of the state will be a separate project.
+
 `decidekv` picks one option out of a list for a given state (a message, a definition, the state of a game) with
 a local LLM. It is a tool, not a new method: it packages known techniques so that one call does the right thing
 at every list size.
