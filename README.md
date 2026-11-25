@@ -134,7 +134,9 @@ Since 1.3.0 `order="lists"` puts the distinct option lists of the call first ("L
 `Score` questions, "List B" with Yes/No...), in one prefix that stays cached while the lists do not change, then the
 state once, then each question with the name of its list, all in parallel. Nothing constant is computed twice: the
 lists once for all the turns, the state once per turn, each question once. It keeps the accuracy of the options-first
-order at the speed of the prefix tree.
+order at the speed of the prefix tree. Since 1.4.0 it takes the `Score` and `Noul` questions, whose labels are their
+answers; `Choice` questions are asked options first, because their letter labels were confused with the list names
+(on llama-server with labels: `Choice` 26% against 48%).
 
 #### Which order for which task
 
@@ -147,7 +149,8 @@ Same engine and data for every order in a row; accuracy · time, paired differen
 | Turn of 15 questions, long state (3,177 characters), Qwen3-8B | 2,760 ms | **326 ms** | 339 ms |
 | Turn of 15 questions, long state, Qwen3.8-27B | 11,314 ms | **1,527 ms** | 1,628 ms |
 | Turn of 15 questions, short state (99 characters), Qwen3-8B / 27B | 189 / 949 ms | **164 / 843 ms** | 178 / 934 ms |
-| Application with Qwen3.8-27B (61 messages, 15 questions each) | **58** right | not measured | 53 right (`auto`) |
+| Application with Qwen3.8-27B, in process (61 messages, 15 questions each) | **58** right | not measured | 53 right (`auto`) |
+| Same application, Gemma 4 12B on llama-server (1.3, questions one at a time; OpenJev library: 60 right · 3.4 s) | 60 right · 1.75 s | 60 right · 2.47 s | 60 right · 1.81 s |
 | `Score` with levels in words, sign of 30 action effects | **70%** | not measured | 40% |
 
 - **Few short questions of different kinds about structured records, a small model** (Typed Decisions with the 8B):
@@ -308,6 +311,24 @@ several slots (`-np`). Each resident prefix gets a slot of its own; one slot is 
 slot holds `n_ctx / slots` tokens. Use it to share one loaded model between programs or to run the model on another
 machine. Answers are decoded with a grammar of the option names, so they are always one of the options; `full=True`
 is not available on this engine.
+
+Since 1.4.0, on llama-server:
+
+- **Labels on by default.** Decoded by name, the server returns only the probability of the chosen option; with
+  one-token labels it returns them all. `labels=None` (the default) means labels on llama-server when the list fits
+  them (52 options at most; a warning above), and names on the other engines.
+- **Questions on several slots at once.** The label questions of one call are spread over the slots and run
+  together. The server cannot copy a cache from one slot to another, so every extra slot recomputes the state:
+  DecideKV uses only as many slots as keep this extra work within `client.parallel_budget` characters (2,048, about
+  500 tokens). Qwen3-8B, 8 slots, a turn of 15 questions about a short state: 407 → 286 ms options first, 381 → 333
+  ms state first, 372 → 323 ms `lists`; with a long state the questions stay on one slot and the time does not change.
+  Sending every question in parallel regardless made long states twice as slow. `kv.client.parallel = False` sends
+  them one at a time.
+- **The chat wrapper comes from the server** (`/apply-template`), so templates with their own tags work;
+  `KV(..., wrap=(before, after))` sets it by hand on any engine, and `answer_prefix` adds text at the start of the
+  answer (for example an empty reasoning block for models that always reason).
+
+On every engine, calls from several threads on one `KV` take turns (a lock inside `KV`).
 
 Above 3,000 options the catalogue vectors can be kept on disk between runs:
 `kv.index(options, vectors=Catalog.cached(texts, kv.encoder, "cache_folder"))` with `from decidekv.catalog import

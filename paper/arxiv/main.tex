@@ -425,8 +425,10 @@ On 100 Banking77 messages a resident list costs 64\ms{} per decision on Qwen3-8B
 recomputed, and 157\ms{} against 538\ms{} on the 27B hybrid. When several questions are asked about one state, the
 order of the prompt matters for both time and accuracy. Options first recomputes the state for every question: with a
 long state (3{,}177 characters) a turn of 15 questions takes 2.8\,s on Qwen3-8B and 11.3\,s on the 27B. The prefix tree
-computes the state once and is 8 and 7 times faster, but it was not always as accurate: in an application with the 27B
-model options first judged 58 of 61 messages right against 53, and on 30 action effects \texttt{Score} questions with
+computes the state once and is 8 and 7 times faster, but it was not always as accurate. In early tests of an
+application in which an agent, through a chat, looks for the actions and words that bring a state it cannot observe,
+only evaluate, to the one it wants (a homeostatic agent, like the partners of our examples), options first judged 58
+of 61 messages right against 53 with the 27B model, and on 30 action effects \texttt{Score} questions with
 levels in words agreed with the true sign in 70\% of the cases against 40\%. Version 1.1 therefore made options first
 the default. Version 1.2 runs its questions in parallel, each copied from its own resident list; this halves a turn
 with a short state on Qwen3-8B (338 to 185\ms) but saves nothing with a long one, since every question still computes
@@ -441,15 +443,30 @@ state it is 8.5 times faster than options first on Qwen3-8B and 7.4 times on the
 the README gives Table~\ref{tab:task} as a guide: the prefix tree for a few short questions of different kinds about
 structured records with a small model (+5.8 points on Typed Decisions with Qwen3-8B); \texttt{lists} where options first
 was more accurate and the state is long or the questions are many; the default when states are short, where the three
-orders take about the same time. \texttt{lists} has not yet been measured on the application and on the action-effect
-probe. Two other layouts we tried are among the negative results (Section~\ref{sec:negative}).
+orders take about the same time. On the same application with Gemma 4 12B on llama-server the three orders judged 60
+of 61 messages right (1.75\,s per message with options first, 1.81\,s with the state first, 2.47\,s with \texttt{lists},
+the questions sent one at a time), like the OpenJev library on the same server in 3.4\,s. \texttt{lists} has not yet
+been measured on the action-effect probe. Two other layouts we tried are among the negative results
+(Section~\ref{sec:negative}).
+
+\paragraph{Questions in parallel on llama-server.} Until version 1.3 the server answered the questions of a call one
+at a time. Version 1.4 spreads them over several slots, which the server evaluates together. A slot cannot receive
+the cache of another, so every extra slot recomputes the state; \dkv{} uses only as many slots as keep this extra work
+within about 500 tokens. With Qwen3-8B and 8 slots, a turn of 15 questions about a short state takes 286 instead of
+407\,ms with options first (333 instead of 381 with the state first, 323 instead of 372 with \texttt{lists}); with a
+long state the questions stay on one slot and the time does not change (798 against 770\,ms). Sending every question in
+parallel regardless made long states twice as slow (813 to 1{,}541\,ms with options first). On Typed Decisions the
+accuracy does not move (51.4 against 51.7\%, $-0.3\pm0.9$ points). On the server, where \texttt{Choice} questions now
+answer with letter labels by default, \texttt{lists} first fell to 42.8\%: the letters of the labels were confused with
+the names of the lists (\texttt{Choice} 26 against 48\%). Since 1.4 \texttt{lists} asks \texttt{Choice} questions options
+first and gives 50.6\% ($-1.3\pm1.7$ against options first, 336 against 379\,ms per case).
 
 \begin{table}[t]
 \centering\small
 \caption{The three prompt orders by task: accuracy $\cdot$ time, paired difference against options first ($\pm U$,
 $k=2$); 8B: Qwen3-8B, 27B: Qwen3.8-27B. Typed Decisions: 2{,}000 decisions, time per case of five questions.
 Turns: 15 questions, median time per turn.
-Application: 61 messages of 15 questions. Action effects: \texttt{Score} questions with levels in words. --: not
+Application: 61 messages of 15 questions (27B in process; Gemma on llama-server, v1.3, time per message). Action effects: \texttt{Score} questions with levels in words. --: not
 measured.}\label{tab:task}
 \footnotesize\setlength{\tabcolsep}{3pt}
 \begin{tabular}{llll}
@@ -462,6 +479,7 @@ Turn, long state, 8B & 2{,}760\ms & \textbf{326\ms} & 339\ms \\
 Turn, long state, 27B & 11{,}314\ms & \textbf{1{,}527\ms} & 1{,}628\ms \\
 Turn, short state, 8B / 27B & 189 / 949\ms & \textbf{164 / 843\ms} & 178 / 934\ms \\
 Application, 27B &\textbf{58} right & -- & 53 right (\texttt{auto}) \\
+Application, Gemma 12B, server & 60 right $\cdot$ 1.75\,s & 60 right $\cdot$ 2.47\,s & 60 right $\cdot$ 1.81\,s \\
 Sign of 30 action effects & \textbf{70\%} & -- & 40\% \\
 \bottomrule
 \end{tabular}

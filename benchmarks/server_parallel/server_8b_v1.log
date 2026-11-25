@@ -1,0 +1,17 @@
+decidekv 1.3.0 from E:\AI\PAI_1shot\decidekv\__init__.py
+turn/short/options/sequential 464.4 ms
+turn/short/options/parallel 240.0 ms
+turn/short/state/sequential 485.6 ms
+turn/short/state/parallel 316.9 ms
+turn/short/lists/sequential 467.9 ms
+turn/short/lists/parallel 315.7 ms
+turn/long/options/sequential 751.8 ms
+turn/long/options/parallel 498.5 ms
+turn/long/state/sequential 601.4 ms
+turn/long/state/parallel 448.7 ms
+turn/long/lists/sequential 650.2 ms
+turn/long/lists/parallel 490.9 ms
+typed options/sequential: {"acc": 0.517, "U": 0.02207985257411942, "ms_case": 373.5}
+typed options/parallel: {"acc": 0.514, "U": 0.021904574749295504, "ms_case": 378.8, "diff": -0.003, "U_diff": 0.008542380457573929, "only_this_right": 34, "only_base_right": 40}
+typed state/parallel: {"acc": 0.5745, "U": 0.02262176500355217, "ms_case": 283.8, "diff": 0.0575, "U_diff": 0.02251753124471416, "only_this_right": 318, "only_base_right": 203}
+typed lists/parallel: {"acc": 0.428, "U": 0.021770343909478535, "ms_case": 280.2, "diff": -0.089, "U_diff": 0.025491751483506356, "only_this_right": 229, "only_base_right": 407}

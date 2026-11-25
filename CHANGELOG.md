@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.4.0 (2026-11-25)
+
+Changes suggested by use in an application on llama-server (Gemma 4 12B).
+
+- **llama-server: label questions on several slots at once** (`LlamaServer.label_logprobs_tree`, also used for
+  options first). The number of slots keeps the work that the extra slots repeat (the state, recomputed in each slot)
+  within `parallel_budget` characters (2,048). Qwen3-8B, 8 slots, a turn of 15 questions about a short state: 407 →
+  286 ms options first, 381 → 333 ms state first, 372 → 323 ms `lists`; a long state stays on one slot, unchanged
+  (sending every question in parallel regardless made it twice as slow). Typed Decisions: 51.4% against 51.7%
+  (−0.3 ± 0.9). `kv.client.parallel = False` restores 1.3.
+- **llama-server: labels on by default** when the options fit one-token labels (`labels=None`), so that every option
+  gets a probability; names on the other engines, as before. A warning above 52 options.
+- **Chat wrapper**: asked to llama-server (`/apply-template`), so templates with their own tags work;
+  `KV(..., wrap=(before, after))` sets it by hand (llama.cpp and llama-server), and an unrenderable template now gives
+  a clear error pointing to it.
+- **`answer_prefix`**: text added at the start of the answer, for models that always reason.
+- **Threads**: calls from several threads on one `KV` (and its indexes) take turns under a lock.
+- **`order="lists"` takes only `Score` and `Noul` questions**; `Choice` questions are asked options first. With
+  letter labels (now the default on llama-server) their labels were confused with the list names: Typed Decisions on
+  llama-server 42.8% (Choice 26%); with the fix 50.6% (−1.3 ± 1.7 against options first).
+
 ## 1.3.0 (2026-11-20)
 
 - **`order="lists"`** in `KV.decide`: the distinct option lists of the call go first (List A, List B, ...) in one

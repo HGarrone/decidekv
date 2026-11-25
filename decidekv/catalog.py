@@ -11,7 +11,7 @@ import os
 
 import numpy as np
 
-from .core import Index, parse_options, render_state
+from .core import Index, locked, parse_options, render_state
 from .primitives import ChoiceAnswer
 
 QUERY_TEMPLATE = "Instruct: {question}\nQuery:{state}"
@@ -126,6 +126,7 @@ class TopKIndex:
         trained = head.report.get("trained_options") if head is not None else None
         self.untrained = set(range(self.n)) - set(trained) if trained is not None else set()
 
+    @locked
     def choose(self, state, instructions=None, usage=None, exclude=()) -> ChoiceAnswer:
         banned = set(self.pos[e] for e in exclude if e in self.pos)
         q = instructions or self.prompt["question"] or ""

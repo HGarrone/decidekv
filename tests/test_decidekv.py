@@ -796,3 +796,107 @@ def test_lists_order_prompt_and_batch():
     assert set(r.answers) == set(qd) and set(r.question_ms) == set(qd)
     kv.decide("A street.", {"a": qs[1]}, order="lists")
     assert kv.client.trees == [3]                   # one question alone: no batch
+
+
+def test_server_labels_on_by_default():
+    kv = make_kv()
+    kv.backend = "llamaserver"
+    assert kv.index(["red", "green", "blue"]).labels
+    with pytest.warns(UserWarning, match="one-token labels"):
+        big = kv.index([f"option {i}" for i in range(60)])
+    assert not big.labels
+    kv.backend = "ollama"
+    assert not kv.index(["one", "two"]).labels
+    assert kv.index(["three", "four"], labels=True).labels
+
+
+def test_calls_from_threads_take_turns():
+    import threading
+    import time as _time
+
+    class SlowClient(FakeClient):
+        active = peak = 0
+
+        def label_logprobs(self, segments, labels, num_ctx=None):
+            SlowClient.active += 1
+            SlowClient.peak = max(SlowClient.peak, SlowClient.active)
+            _time.sleep(0.002)
+            out = super().label_logprobs(segments, labels, num_ctx)
+            SlowClient.active -= 1
+            return out
+
+    kv = make_kv()
+    kv.client = SlowClient()
+    qs = {"a": Noul(instructions="Is it late?"), "b": Score(instructions="How loud?", criteria=["quiet", "loud"])}
+    states = [f"a street, case {i}, loud and late" for i in range(16)]
+    seq = [kv.decide(s, qs).answers for s in states]
+    out = [None] * len(states)
+
+    def work(i):
+        out[i] = kv.decide(states[i], qs).answers
+    threads = [threading.Thread(target=work, args=(i,)) for i in range(len(states))]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert SlowClient.peak == 1
+    assert out == seq
+
+
+def test_server_wrap_and_answer_prefix():
+    from decidekv.llamaserver import LlamaServer
+
+    class Srv(LlamaServer):
+        def _get(self, path):
+            if path == "/props":
+                return {"total_slots": 4, "model_path": "", "chat_template": "{{ x }}", "bos_token": "<bos>"}
+            return [{"n_ctx": 4096}]
+
+        def _post(self, path, body):
+            return {"prompt": "<bos>U:" + body["messages"][0]["content"] + "|A:"}
+
+    srv = Srv("http://fake", answer_prefix="<think></think>")
+    assert srv._wrap == ("U:", "|A:<think></think>") and srv.parallel
+    assert Srv("http://fake", wrap=("[", "]"))._wrap == ("[", "]")
+    with pytest.raises(ValueError, match="ollama"):
+        KV("fake", backend="ollama", wrap=("[", "]"))
+
+
+def test_decide_on_server_runs_questions_on_several_slots():
+    import hashlib
+    import threading
+    srv = fake_server(slots=4)
+    lock = threading.Lock()
+
+    def post(path, body):
+        with lock:
+            srv.sent.append((path, body))
+        h = int(hashlib.md5(body["prompt"].encode()).hexdigest()[:8], 16)
+        toks = ["Yes", "No", "0", "1", "2"]
+        ps = [(h >> (4 * i)) % 13 + 1 for i in range(len(toks))]
+        top = [{"token": t, "logprob": math.log(p / sum(ps))} for t, p in zip(toks, ps)]
+        return {"completion_probabilities": [{"top_logprobs": top}], "timings": {"prompt_n": 5, "cache_n": 9},
+                "tokens_predicted": 1}
+    srv._post = post
+    kv = make_kv()
+    kv.client, kv.backend = srv, "llamaserver"
+    qs = {f"n{i}": Noul(instructions=f"Is condition {i} true?") for i in range(5)}
+    qs["s"] = Score(instructions="How strong?", criteria=["none", "some", "much"])
+    for order in ("options", "state", "lists"):
+        srv.parallel = False
+        a = kv.decide("A quiet street at night.", qs, order=order).answers
+        srv.parallel, srv.sent = True, []
+        b = kv.decide("A quiet street at night.", qs, order=order).answers
+        assert a == b, order
+        assert len({body["id_slot"] for p_, body in srv.sent if p_ == "/completion"}) > 1, order
+
+
+def test_lists_order_keeps_lettered_choice_out():
+    kv = make_kv()
+    kv.client = TreeClient()
+    qd = {"s": Score(instructions="How loud?", criteria=["quiet", "medium", "loud"]),
+          "a": Noul(instructions="Is it late?"), "b": Noul(instructions="Is it red?"),
+          "c": Choice(instructions="Which?", options=["x", "y", "z"])}
+    r = kv.decide("A long street at night, late.", qd, order="lists", labels=True)
+    assert kv.client.trees == [3]                   # the Choice with letter labels is asked options first
+    assert set(r.answers) == set(qd)

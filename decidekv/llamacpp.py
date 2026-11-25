@@ -130,7 +130,9 @@ class LlamaCpp:
 
     def __init__(self, model: str, n_ctx: int = 16384, n_batch: int = 2048, n_gpu_layers: int = -1,
                  kv_type: str = "f16", verbose: bool = False, resident: int = 7, kv_on_gpu: bool = True,
-                 scratch: int | None = None):
+                 scratch: int | None = None, wrap: tuple[str, str] | None = None, answer_prefix: str = ""):
+        """`wrap`: text before and after the prompt (default: the model's chat template); `answer_prefix`: text added
+        at the start of the answer, e.g. an empty reasoning block for models that always reason."""
         L = _llama_cpp()
         self.L = L
         self.model, self.path = model, ollama_gguf(model)
@@ -160,7 +162,8 @@ class LlamaCpp:
         self._tries: dict[tuple, _Trie] = {}
         self._stops = None
         self._needs_bos = None
-        self._wrap = self._chat_wrap()
+        before, after = wrap if wrap is not None else self._chat_wrap()
+        self._wrap = (before, after + answer_prefix)
 
     def close(self):
         if getattr(self, "ctx", None):
@@ -207,10 +210,14 @@ class LlamaCpp:
             return "", ""
         import jinja2
         marker = "\x00DECIDEKV\x00"
-        out = jinja2.Environment().from_string(tpl).render(
-            messages=[{"role": "user", "content": marker}], add_generation_prompt=True, enable_thinking=False,
-            bos_token=self.llm.detokenize([self.llm.token_bos()]).decode(errors="ignore"), eos_token="")
-        before, after = out.split(marker)
+        try:
+            out = jinja2.Environment().from_string(tpl).render(
+                messages=[{"role": "user", "content": marker}], add_generation_prompt=True, enable_thinking=False,
+                bos_token=self.llm.detokenize([self.llm.token_bos()]).decode(errors="ignore"), eos_token="")
+            before, after = out.split(marker)
+        except Exception as e:
+            raise ValueError(f"the chat template of {self.model} could not be rendered ({e}); "
+                             "KV(..., wrap=(before, after)) sets the wrapper by hand") from None
         return before, after
 
     def tokenize(self, text: str, special: bool = False) -> list[int]:

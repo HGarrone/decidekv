@@ -6,7 +6,9 @@ with several slots (`-np`), e.g.
 
     llama-server -m model.gguf -c 32768 -np 8 -fa on -ctk q8_0 -ctv q8_0
 
-or let `LlamaServer.start` launch the llama.cpp build found by decidekv. `score_options` (`full=True`) needs the logits
+or let `LlamaServer.start` launch the llama.cpp build found by decidekv. The label questions of one call run at the
+same time on different slots (`parallel`, default True). The chat wrapper of the prompt is asked to the server
+(`/apply-template`), or set by hand with `wrap=(before, after)`. `score_options` (`full=True`) needs the logits
 of arbitrary tokens and is only available with the in-process engine.
 """
 from __future__ import annotations
@@ -20,12 +22,17 @@ import time
 import urllib.error
 import urllib.request
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 
 
 class LlamaServer:
     """Backend that talks to a llama-server (see the module docstring)."""
 
-    def __init__(self, url: str = "http://127.0.0.1:8080", timeout: float = 600, process=None):
+    def __init__(self, url: str = "http://127.0.0.1:8080", timeout: float = 600, process=None,
+                 wrap: tuple[str, str] | None = None, answer_prefix: str = ""):
+        """`wrap`: text before and after the prompt (default: the model's chat template, asked to the server);
+        `answer_prefix`: text added at the start of the answer, e.g. an empty reasoning block for models that always
+        reason."""
         self.host = url.rstrip("/")
         self.timeout = timeout
         self.process = process
@@ -33,13 +40,17 @@ class LlamaServer:
         self.slots = int(props.get("total_slots", 1))
         self.model_path = props.get("model_path", "")
         self.n_ctx = int(self._get("/slots")[0].get("n_ctx", 0))
-        self._wrap = self._chat_wrap(props.get("chat_template") or "", props.get("bos_token") or "")
+        before, after = wrap if wrap is not None else self._server_wrap(props)
+        self._wrap = (before, after + answer_prefix)
+        self.parallel = True
+        self.parallel_budget = 2048     # characters that the extra slots may recompute (see label_logprobs_tree)
         self._slot_of = OrderedDict()
         self.scratch = self.slots - 1
 
     @classmethod
     def start(cls, model: str, port: int = 8080, n_ctx: int = 32768, slots: int = 8, kv_type: str = "q8_0",
-              n_gpu_layers: int = 99, exe: str | None = None, wait: float = 300) -> "LlamaServer":
+              n_gpu_layers: int = 99, exe: str | None = None, wait: float = 300,
+              wrap: tuple[str, str] | None = None, answer_prefix: str = "") -> "LlamaServer":
         """Launch llama-server on a GGUF model (an Ollama model name or a .gguf path) and connect to it."""
         from .llamacpp import ollama_gguf
         path = model if model.endswith(".gguf") else ollama_gguf(model)
@@ -62,7 +73,7 @@ class LlamaServer:
             except Exception:
                 ready = False
             if ready:
-                return cls(url, process=proc)
+                return cls(url, process=proc, wrap=wrap, answer_prefix=answer_prefix)
             time.sleep(0.5)
         proc.terminate()
         try:
@@ -167,9 +178,31 @@ class LlamaServer:
         """Forget a resident prefix declared with `hold`."""
         self._slot_of.pop(prefix, None)
 
-    def label_logprobs(self, segments, labels, num_ctx=None):
-        """log P of each one-token label (tokens equal to the label up to spaces are summed); -> (dict, stats)."""
-        j = self._complete(segments, n_predict=1, n_probs=100)
+    def _server_wrap(self, props: dict) -> tuple[str, str]:
+        """Return (before, after) text wrapped around the user message via the server."""
+        marker = "\x00DECIDEKV\x00"
+        try:
+            j = self._post("/apply-template", {"messages": [{"role": "user", "content": marker}],
+                                                "chat_template_kwargs": {"enable_thinking": False}})
+            prompt = j.get("prompt") if isinstance(j, dict) else None
+            if isinstance(prompt, str):
+                parts = prompt.split(marker)
+                if len(parts) == 2:
+                    before, after = parts
+                    bos = props.get("bos_token")
+                    if isinstance(bos, str) and bos and before.startswith(bos):
+                        before = before[len(bos):]
+                    return before, after
+        except Exception:
+            pass
+        try:
+            return self._chat_wrap(props.get("chat_template") or "", props.get("bos_token") or "")
+        except Exception:
+            raise ValueError("chat template could not be rendered; "
+                             "KV(..., wrap=(before, after)) sets the wrapper by hand") from None
+
+    def _label_result(self, j: dict, labels):
+        """Turn a completion reply into (label -> log-prob, stats)."""
         top = (j.get("completion_probabilities") or [{}])[0].get("top_logprobs", [])
         out = {}
         for lab in labels:
@@ -178,6 +211,63 @@ class LlamaServer:
         st = self._stats(j)
         st["output_tokens"] = 1
         return out, st
+
+    def label_logprobs(self, segments, labels, num_ctx=None):
+        """log P of each one-token label; -> (dict label -> log-prob, stats)."""
+        j = self._complete(segments, n_predict=1, n_probs=100)
+        return self._label_result(j, labels)
+
+    def label_logprobs_tree(self, items):
+        """Answer several (segments, labels) items concurrently across slots. The server cannot copy a cache from
+        one slot to another, so every extra slot recomputes the part of the prompt it has not seen (all but a first
+        segment already met in earlier calls); the number of slots is chosen so that this extra work stays within
+        `parallel_budget` characters (a long state runs on one slot, one question after another, as in 1.3)."""
+        if getattr(self, "parallel", True) is False or len(items) < 2 or self.slots < 2:
+            return [self.label_logprobs(segments, labels) for segments, labels in items]
+        known = self.__dict__.setdefault("_known_firsts", OrderedDict())
+        new = sorted(len(self._prompt(seg)) - (len(seg[0]) if seg[0] in known else 0) for seg, _ in items)
+        per_slot = max(1, new[len(new) // 2])
+        for seg, _ in items:
+            known[seg[0]] = None
+            known.move_to_end(seg[0])
+        while len(known) > 256:
+            known.popitem(last=False)
+        n = min(self.slots, len(items), 1 + getattr(self, "parallel_budget", 2048) // per_slot)
+        if n < 2:
+            return [self.label_logprobs(segments, labels) for segments, labels in items]
+        groups = {}
+        for idx, (segments, labels) in enumerate(items):
+            groups.setdefault(segments[0], []).append(idx)
+        ordered = [idx for idxs in groups.values() for idx in idxs]
+        m = len(ordered)
+        base = m // n
+        extra = m % n
+        chunks = []
+        pos = 0
+        for c in range(n):
+            size = base + (1 if c < extra else 0)
+            chunks.append(ordered[pos:pos + size])
+            pos += size
+        results = [None] * len(items)
+
+        def run_chunk(chunk, c):
+            outs = []
+            for idx in chunk:
+                segments, labels = items[idx]
+                body = {"prompt": self._prompt(segments), "cache_prompt": True, "id_slot": c,
+                        "temperature": 0, "n_predict": 1, "n_probs": 100}
+                j = self._post("/completion", body)
+                outs.append((idx, self._label_result(j, labels)))
+            return outs
+
+        with ThreadPoolExecutor(max_workers=n) as ex:
+            futures = [ex.submit(run_chunk, chunk, c) for c, chunk in enumerate(chunks)]
+            for fut in futures:
+                for idx, res in fut.result():
+                    results[idx] = res
+        return results
+
+    label_logprobs_resident = label_logprobs_tree
 
     def pick_option(self, segments, options, num_ctx=None, enum_max=None, allowed=None):
         """Greedy decoding constrained to the option names (a GBNF grammar); -> (option, log-prob, stats)."""

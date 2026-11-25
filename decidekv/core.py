@@ -8,8 +8,10 @@ the state/question tokens are computed. Questions on the same state also share [
 from __future__ import annotations
 
 import difflib
+import functools
 import json
 import math
+import threading
 import time
 import warnings
 from typing import Any, Iterable
@@ -20,6 +22,16 @@ from .primitives import (Choice, ChoiceAnswer, Noul, NoulAnswer, Response, Score
 
 LETTERS = [chr(c) for c in range(65, 91)] + [chr(c) for c in range(97, 123)]   # 52 single-token labels
 MAX_LABELS = len(LETTERS)
+
+
+def locked(method):
+    """Run a method of KV or of an index under the KV's lock, so that threads sharing one KV take turns."""
+    @functools.wraps(method)
+    def run(self, *args, **kwargs):
+        lock = self._lock if hasattr(self, "_lock") else self.kv._lock
+        with lock:
+            return method(self, *args, **kwargs)
+    return run
 CHARS_PER_TOKEN = 3.0          # conservative estimate used to size num_ctx before the first call
 
 
@@ -206,6 +218,7 @@ class Index:
         q = instructions or self.question or ""
         return self.kv.encoder([template.format(question=q, state=render_state(state))])[0]
 
+    @locked
     def choose(self, state: Any, instructions: str | None = None, usage: Usage | None = None,
                exclude: Iterable[str] = (), full: bool = False, order: str = "options-first",
                cache: float | None = None) -> ChoiceAnswer:
@@ -248,6 +261,7 @@ class Index:
             return self._choose_labels(state, instructions, usage, allowed, order)
         return self._choose_name(state, instructions, usage, allowed, order)
 
+    @locked
     def scores(self, state: Any, instructions: str | None = None, allowed: Iterable[str] | None = None,
                usage: Usage | None = None, order: str = "options-first") -> dict[str, float]:
         """log P of every option for `state` (normalised over `allowed`, all options when None)."""
@@ -339,7 +353,8 @@ class KV:
 
     def __init__(self, model: str, backend: str = "llamacpp", host: str | None = None, keep_alive: str = "30m",
                  embed: Any = None, flat_max: int = 3000, query_template: str | None = None,
-                 question_first: bool = True, **backend_kw):
+                 question_first: bool = True, wrap: tuple[str, str] | None = None, answer_prefix: str = "",
+                 **backend_kw):
         """backend="llamacpp" (default: in-process llama.cpp; loads the GGUF that Ollama already downloaded, or a
         .gguf path; extra keyword arguments such as n_ctx and kv_type go to the backend) or "llamaserver" (a
         llama.cpp `llama-server`: with `host` the URL of a running server, without it decidekv starts one on the
@@ -349,15 +364,22 @@ class KV:
         `embed` is the embedding model of the catalogue used for option sets larger than `flat_max` (a model name
         such as "qwen3-embedding:4b", or any callable that maps a list of texts to L2-normalised vectors).
         `query_template` is the text sent to the embedding model for a state (placeholders {state} and {question});
-        the default suits instruction-tuned embedding models such as Qwen3-Embedding."""
+        the default suits instruction-tuned embedding models such as Qwen3-Embedding.
+
+        `wrap=(before, after)` sets the text around every prompt by hand (default: the model's chat template; on
+        llama-server it is asked to the server); `answer_prefix` is added at the start of the answer, e.g. an empty
+        reasoning block for models that always reason. Calls from several threads on one KV take turns (a lock)."""
         if backend == "ollama":
+            if wrap is not None or answer_prefix:
+                raise ValueError("wrap and answer_prefix are not available with backend='ollama'")
             self.client = Ollama(model, host, keep_alive)
         elif backend == "llamacpp":
             from .llamacpp import LlamaCpp
-            self.client = LlamaCpp(model, **backend_kw)
+            self.client = LlamaCpp(model, wrap=wrap, answer_prefix=answer_prefix, **backend_kw)
         elif backend == "llamaserver":
             from .llamaserver import LlamaServer
-            self.client = LlamaServer(host) if host else LlamaServer.start(model, **backend_kw)
+            self.client = (LlamaServer(host, wrap=wrap, answer_prefix=answer_prefix) if host else
+                           LlamaServer.start(model, wrap=wrap, answer_prefix=answer_prefix, **backend_kw))
         else:
             raise ValueError(f"unknown backend {backend!r} (use 'llamacpp', 'llamaserver' or 'ollama')")
         self.model = model
@@ -373,6 +395,7 @@ class KV:
         self._encoder = None
         # options first: answer the labelled questions of one call in parallel sequences (False: one by one)
         self.batch_options = True
+        self._lock = threading.RLock()
 
     def require_ctx(self, n: int):
         """Grow (never shrink) the shared context size."""
@@ -416,6 +439,7 @@ class KV:
             self._encoder = CachedEncoder(encoder)
         return self._encoder
 
+    @locked
     def warmup(self, questions, head=None):
         """Prepare everything the first `decide` call would otherwise prepare: the index and the resident prefix of
         every question (`questions` is a dict {qid: question}), and, with a trained `head` or an embedding model, the
@@ -430,6 +454,7 @@ class KV:
             self.encoder(["warm-up"])
         return round((time.perf_counter() - t0) * 1000, 2)
 
+    @locked
     def train(self, options: Any, examples: Any, question: str | None = None, out: str | None = None,
               **fit_kw) -> Any:
         """Train the embedding catalogue of `options` on `examples`, a list of (state, name of the right option).
@@ -455,8 +480,9 @@ class KV:
             head.save(out)
         return head
 
+    @locked
     def index(self, options: Any, task: str | None = None, question: str | None = None, noun: str = "option",
-              state_label: str = "State", labels: Any = False, k: int | None = None, head: Any = None, **kw) -> Any:
+              state_label: str = "State", labels: Any = None, k: int | None = None, head: Any = None, **kw) -> Any:
         """Build an index over `options` (list of names or {name: description}).
 
         Up to `flat_max` options the whole list is written once in the KV cache and every decision computes only
@@ -471,9 +497,19 @@ class KV:
         untrained catalogue prefers an option without examples; `fallback=0` switches it off. A head trained on
         every option never falls back.
 
+        `labels` (default None): one-token labels A-Z/a-z, a probability for every option in one pass. None means
+        True on llama-server when the list fits the labels (the server returns only the probability of the chosen
+        option otherwise) and False on the other engines.
+
         >>> kv.index(intents, noun="intent", state_label="Customer message",
         ...          question="Which intent does this customer message express?")
         """
+        if labels is None:
+            fits = head is None and len(options) <= min(self.flat_max, MAX_LABELS)
+            labels = self.backend == "llamaserver" and fits
+            if self.backend == "llamaserver" and not fits and head is None and len(options) <= self.flat_max:
+                warnings.warn(f"{len(options)} options do not fit one-token labels: on llama-server only the "
+                              "probability of the chosen option is returned", stacklevel=2)
         if k is None:
             k = 1 if head is not None else 50
         key = (tuple(options.items()) if isinstance(options, dict) else tuple(options), task, question, noun,
@@ -496,6 +532,7 @@ class KV:
                                            state_label=state_label, **kw)
         return self._indexes[key]
 
+    @locked
     def choose(self, state: Any, options: Any, instructions: str | None = None) -> ChoiceAnswer:
         """One-shot convenience: the index for `options` is built on first use and reused afterwards."""
         if hasattr(options, "choose"):
@@ -504,8 +541,9 @@ class KV:
             idx = self.index(options)
         return idx.choose(state, instructions)
 
+    @locked
     def decide(self, state: Any, questions: dict[str, Any] | Any = None, temperature: float = 1.0,
-               labels: bool = False, full: bool = False, head: Any = None, order: str = "options",
+               labels: bool | None = None, full: bool = False, head: Any = None, order: str = "options",
                threshold: float | str | None = None, cache: float | None = None,
                escalate_order: str = "options") -> Response:
         """OpenJev / Jev-style: several typed questions about one state.
@@ -532,8 +570,8 @@ class KV:
         them, and keeps long lists first; "lists" puts the distinct option lists of the call first (List A, List B,
         ...), in one prefix that stays cached while the lists do not change, then the state once, then every question
         with the name of its list, all in parallel: as accurate as "options" in our tests and about as fast as
-        "state" (questions answered by labels: `Score`, `Noul`, `Choice` with `labels=True`; the others are asked
-        options first).
+        "state" (`Score` and `Noul` questions, whose labels are their answers; `Choice` questions are asked options
+        first, because their letter labels would be confused with the list names).
         `Response.question_ms` gives the time of every question; for questions answered together in one pass it is
         an estimate (the time of the pass shared in proportion to the tokens computed for each question)."""
         if questions is None and hasattr(state, "questions"):
@@ -599,8 +637,10 @@ class KV:
             shared = set()
         listed = []
         if order == "lists":
+            # only questions whose labels are their own answers (Score levels, Yes/No): letter labels of a Choice
+            # would be confused with the list names (on Typed Decisions with llama-server: Choice 26 % against 48 %)
             listed = [(qid, idx, ins) for qid, q, idx, ins in items
-                      if idx.labels and not (full and q.type == "choice")]
+                      if idx.labels and list(idx.labels) == list(idx.keys) and not (full and q.type == "choice")]
             if len(listed) < 2:
                 listed = []
         in_lists = {qid for qid, _, _ in listed}
@@ -721,6 +761,7 @@ class KV:
             question_ms[qid] = round(ms * n_tok / sum(computed), 2)
         return out
 
+    @locked
     def train_questions(self, examples: Any, out: str | None = None, layout: str = "per-question",
                         **fit_kw) -> Any:
         """Train the embedding catalogue on typed questions. `examples`: (state, question, answer) triples; the
@@ -759,6 +800,7 @@ class KV:
             head.save(out)
         return head
 
+    @locked
     def teach(self, cases: Any) -> list:
         """(state, question, answer) examples labelled by the LLM: for each (state, questions) pair, `decide` with
         the probability of every option. Use them with `train_questions` to train the catalogue without labels."""
@@ -811,7 +853,7 @@ class KV:
         return Response(model=f"decidekv/{self.model}/catalogue", answers=answers, usage=Usage(),
                         latency_ms=round((time.perf_counter() - t0) * 1000, 2))
 
-    def question_index(self, q: Any, labels: bool = False, warm: bool = True) -> tuple[Any, Index, str]:
+    def question_index(self, q: Any, labels: bool | None = None, warm: bool = True) -> tuple[Any, Index, str]:
         """(question, index, instructions) used by `decide` for one typed question.
 
         Choice: the options (answer by name; labels=True: one-token labels, a probability for every option).
